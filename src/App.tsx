@@ -286,6 +286,26 @@ export default function App() {
 
         {/* Workspace Quick Tag & Sidebar Toggles */}
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              const a = document.createElement('a');
+              a.href = '/main.js';
+              a.download = 'main.js';
+              a.click();
+              
+              const b = document.createElement('a');
+              b.href = '/manifest.json';
+              b.download = 'manifest.json';
+              b.click();
+              
+              triggerNotification('正在下载插件核心文件 (main.js & manifest.json)', 'success');
+            }}
+            className="flex items-center gap-1.5 px-3 py-1 bg-violet-600 hover:bg-violet-500 rounded-md text-white text-[11px] font-medium transition-colors shadow-sm"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            <span>下载最终编译版</span>
+          </button>
+          
           <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 p-0.5 rounded-md">
             <button
               onClick={() => {

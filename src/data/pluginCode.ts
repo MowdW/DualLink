@@ -51,6 +51,30 @@ export default class LocalFileLinkerPlugin extends Plugin {
     console.log('正在加载 Obsidian 外部物理文件关联映射插件 (DualLink)...');
     await this.loadSettings();
 
+    // 注入样式去除 Live Preview 默认边框
+    if (!document.getElementById('duallink-gallery-styles')) {
+        const styleEl = document.createElement('style');
+        styleEl.id = 'duallink-gallery-styles';
+        styleEl.textContent = \`
+            .markdown-source-view.mod-cm6 .cm-embed-block:has(.duallink-gallery-container),
+            .markdown-source-view.mod-cm6 .cm-preview-code-block:has(.duallink-gallery-container) {
+                border: 0 !important;
+                box-shadow: none !important;
+                background-color: transparent !important;
+            }
+            .markdown-source-view.mod-cm6 .cm-embed-block:has(.duallink-gallery-container):hover,
+            .markdown-source-view.mod-cm6 .cm-preview-code-block:has(.duallink-gallery-container):hover {
+                box-shadow: none !important;
+            }
+            .markdown-reading-view .duallink-gallery-add-btn,
+            .markdown-reading-view .duallink-gallery-sub-btn,
+            .markdown-reading-view .duallink-gallery-plus-btn {
+                display: none !important;
+            }
+        \`;
+        document.head.appendChild(styleEl);
+    }
+
     // 注册自定义 local-file:// 安全协议解析与快捷点击动作
     this.registerObsidianProtocol();
 
@@ -86,9 +110,9 @@ export default class LocalFileLinkerPlugin extends Plugin {
     );
 
     // 2. 注册 Ribbon 图标便于手动录入外部物理路径
-    this.addRibbonIcon('link-2', '插入本地文件映射链接', async () => {
-      this.promptForLocalFileLink();
-    });
+    // this.addRibbonIcon('link-2', '插入本地文件映射链接', async () => {
+    //   this.promptForLocalFileLink();
+    // });
 
     // 4. 注册全局命令列表便于键盘流操作
     this.addCommand({
@@ -104,7 +128,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
       this.app.workspace.on('editor-menu', (menu, editor, view) => {
         menu.addItem((item) => {
           item
-            .setTitle('插入本地物理路径映射链接')
+            .setTitle('DualLink')
             .setIcon('link-2')
             .onClick(() => {
               this.promptForLocalFileLink(editor);
@@ -196,12 +220,623 @@ export default class LocalFileLinkerPlugin extends Plugin {
       });
     });
 
+    // 5.5 注册分栏组图 (Gallery) 的 代码块 处理器
+    this.registerMarkdownCodeBlockProcessor('duallink-gallery', (source, el, ctx) => {
+      const lines = source.split('\\n');
+      let columns = 3;
+      const images: string[] = [];
+      let isConfig = true;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (isConfig && trimmed.startsWith('{')) {
+          try {
+            const config = JSON.parse(trimmed);
+            if (config.columns) columns = config.columns;
+          } catch (e) { }
+          isConfig = false;
+        } else {
+          isConfig = false;
+          images.push(trimmed);
+        }
+      }
+
+      el.addClass('duallink-gallery-container');
+      el.style.position = 'relative';
+
+      const updateCodeBlock = async (newColumns: number, newImages: string[]) => {
+          const info = ctx.getSectionInfo(el);
+          if (!info) {
+              const { Notice } = require('obsidian');
+              new Notice('无法获取区块在文档中的行号，请确保文档已被正确解析。');
+              return;
+          }
+          const { MarkdownView } = require('obsidian');
+          const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+          
+          const newContent = \`\\\`\\\`\\\`duallink-gallery\\n{ "columns": \${newColumns} }\\n\${newImages.join('\\n')}\\n\\\`\\\`\\\`\`;
+          
+          if (view && (view as any).editor && typeof (view as any).editor.replaceRange === 'function' && (view as any).getMode() !== 'preview') {
+              const editor = (view as any).editor;
+              editor.replaceRange(
+                  newContent,
+                  { line: info.lineStart, ch: 0 },
+                  { line: info.lineEnd, ch: editor.getLine(info.lineEnd).length }
+              );
+          } else {
+              const file = this.app.workspace.getActiveFile();
+              if (file) {
+                  await this.app.vault.process(file, (data) => {
+                      const lines = data.split('\\n');
+                      lines.splice(info.lineStart, info.lineEnd - info.lineStart + 1, newContent);
+                      return lines.join('\\n');
+                  });
+              }
+          }
+      };
+
+      // 启动后台校验和自动修正工作
+      setTimeout(async () => {
+          let hasFixes = false;
+          const newImages = [...images];
+          for (let i = 0; i < newImages.length; i++) {
+              const imgSource = newImages[i];
+              const internalMatch = imgSource.match(/!\\[\\[(.*?)\\]\\]/);
+              if (internalMatch) {
+                  const linkText = internalMatch[1].split('|')[0];
+                  const dest = this.app.metadataCache.getFirstLinkpathDest(linkText, ctx.sourcePath);
+                  if (!dest) {
+                      const fileName = linkText.split(/[\\/\\\\]/).pop();
+                      if (fileName) {
+                          const fallbackDest = this.app.metadataCache.getFirstLinkpathDest(fileName, ctx.sourcePath);
+                          if (fallbackDest) {
+                              hasFixes = true;
+                              const newLinkText = fallbackDest.path + (internalMatch[1].includes('|') ? '|' + internalMatch[1].split('|')[1] : '');
+                              newImages[i] = imgSource.replace(internalMatch[1], newLinkText);
+                          }
+                      }
+                  }
+                  continue;
+              }
+              
+              const externalMatch = imgSource.match(/!\\[.*?\\]\\(<file:\\/\\/\\/(.*?)>\\)/) || imgSource.match(/!\\[.*?\\]\\(file:\\/\\/\\/(.*?)\\)/);
+              if (externalMatch) {
+                  const rawPath = decodeURIComponent(externalMatch[1]);
+                  const fs = require('fs');
+                  if (!fs.existsSync(rawPath) && this.settings.defaultFolderPath) {
+                      const fileName = require('path').basename(rawPath);
+                      const newPath = await this.findExternalFileRec(fileName, this.settings.defaultFolderPath, 4, 0);
+                      if (newPath) {
+                          hasFixes = true;
+                          let appendPath = newPath.split(/[\\/\\\\]/).map((c:string) => encodeURIComponent(c)).join('/');
+                          appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
+                          newImages[i] = imgSource.replace(externalMatch[1], appendPath);
+                      }
+                  }
+                  continue;
+              }
+          }
+          if (hasFixes) {
+              updateCodeBlock(columns, newImages);
+          }
+      }, 100);
+
+      const galleryWrapper = el.createEl('div');
+      galleryWrapper.style.position = 'relative';
+
+      const grid = galleryWrapper.createEl('div');
+      grid.style.display = 'grid';
+      grid.style.gridTemplateColumns = \`repeat(\${columns}, 1fr)\`;
+      grid.style.gap = '12px';
+      grid.style.alignItems = 'start';
+      
+      const colControls = galleryWrapper.createDiv({ cls: 'duallink-gallery-control' });
+      colControls.style.position = 'absolute';
+      colControls.style.top = '50%';
+      colControls.style.left = '4px';
+      colControls.style.transform = 'translateY(-50%)';
+      colControls.style.display = 'flex';
+      colControls.style.flexDirection = 'column';
+      colControls.style.alignItems = 'center';
+      colControls.style.justifyContent = 'center';
+      colControls.style.background = 'transparent';
+      colControls.style.zIndex = '10';
+      colControls.style.opacity = '0';
+      colControls.style.transition = 'opacity 0.2s';
+      colControls.style.width = '32px';
+
+      const createColBtn = (text: string, title: string, onClick: () => void) => {
+          const btn = colControls.createEl('button', { text, title });
+          btn.style.background = 'transparent';
+          btn.style.border = 'none';
+          btn.style.boxShadow = 'none';
+          btn.style.cursor = 'pointer';
+          btn.style.color = 'var(--text-muted)';
+          btn.style.fontSize = '24px';
+          btn.style.padding = '0';
+          btn.style.lineHeight = '1';
+          btn.style.transition = 'transform 0.2s, color 0.2s';
+          btn.addEventListener('mouseenter', () => { btn.style.transform = 'scale(1.2)'; btn.style.color = 'var(--text-normal)'; });
+          btn.addEventListener('mouseleave', () => { btn.style.transform = 'scale(1)'; btn.style.color = 'var(--text-muted)'; });
+          btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      };
+
+      createColBtn('-', '减少列数', () => { if (columns > 1) updateCodeBlock(columns - 1, images); });
+      createColBtn('+', '增加列数', () => { if (columns < 8) updateCodeBlock(columns + 1, images); });
+
+      const addControls = galleryWrapper.createDiv({ cls: 'duallink-gallery-control' });
+      addControls.style.position = 'absolute';
+      addControls.style.top = '50%';
+      addControls.style.right = '4px';
+      addControls.style.transform = 'translateY(-50%)';
+      addControls.style.display = 'flex';
+      addControls.style.alignItems = 'center';
+      addControls.style.justifyContent = 'center';
+      addControls.style.background = 'transparent';
+      addControls.style.zIndex = '10';
+      addControls.style.opacity = '0';
+      addControls.style.transition = 'opacity 0.2s';
+      addControls.style.width = '32px';
+
+      const addBtn = addControls.createEl('button', { title: '添加新图片' });
+      addBtn.style.background = 'transparent';
+      addBtn.style.border = 'none';
+      addBtn.style.boxShadow = 'none';
+      addBtn.style.cursor = 'pointer';
+      addBtn.style.color = 'var(--text-muted)';
+      addBtn.style.padding = '0';
+      addBtn.style.display = 'flex';
+      addBtn.style.alignItems = 'center';
+      addBtn.style.justifyContent = 'center';
+      addBtn.style.transition = 'transform 0.2s, color 0.2s';
+      addBtn.innerHTML = \`<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>\`;
+
+      addBtn.addEventListener('mouseenter', () => { addBtn.style.transform = 'scale(1.2)'; addBtn.style.color = 'var(--text-normal)'; });
+      addBtn.addEventListener('mouseleave', () => { addBtn.style.transform = 'scale(1)'; addBtn.style.color = 'var(--text-muted)'; });
+
+      addBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (el.closest('.markdown-reading-view')) return;
+          
+          const tempBox = grid.createEl('div');
+          tempBox.style.borderRadius = '8px';
+          tempBox.style.border = '2px dashed var(--interactive-accent)';
+          tempBox.style.display = 'flex';
+          tempBox.style.alignItems = 'center';
+          tempBox.style.justifyContent = 'center';
+          tempBox.style.minHeight = '100px';
+          tempBox.style.color = 'var(--interactive-accent)';
+          tempBox.style.fontSize = '12px';
+          tempBox.createEl('span', { text: '正在选择文件...' });
+
+          const { Notice, MarkdownView } = require('obsidian');
+          const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+          if (!view) { 
+              tempBox.remove(); 
+              return; 
+          }
+          
+          new PathPromptModal(this, '', (inputPath: string) => {
+               if(!inputPath) { 
+                   tempBox.remove(); 
+                   return; 
+               }
+               const adapter = this.app.vault.adapter;
+               const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
+               let newSyntax = '';
+               
+               const cleanP = inputPath.replace(/['"]/g, '').trim();
+               let isInternal = false;
+               let internalPath = '';
+               if (vaultBasePath && cleanP.startsWith(vaultBasePath)) {
+                   isInternal = true;
+                   internalPath = cleanP.substring(vaultBasePath.length).replace(/^[/\\\\]+/, '').replace(/\\\\/g, '/');
+               }
+               if (isInternal) {
+                   newSyntax = \`![[\${internalPath}]]\`;
+               } else {
+                   let appendPath = cleanP.startsWith('/') ? cleanP.substring(1) : cleanP;
+                   appendPath = appendPath.split('/').map(c => encodeURIComponent(c)).join('/');
+                   appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
+                   newSyntax = \`![](<file:///\${appendPath}>)\`;
+               }
+               updateCodeBlock(columns, [...images, newSyntax]);
+          }).open();
+      });
+
+      galleryWrapper.addEventListener('mouseenter', () => {
+           if (!el.closest('.markdown-reading-view')) {
+               colControls.style.opacity = '1';
+               addControls.style.opacity = '1';
+           }
+      });
+      galleryWrapper.addEventListener('mouseleave', () => {
+           colControls.style.opacity = '0';
+           addControls.style.opacity = '0';
+      });
+
+      galleryWrapper.style.padding = '0 36px';
+
+      images.forEach((imgSource, index) => {
+        const item = grid.createEl('div');
+        
+        item.style.position = 'relative';
+        item.style.borderRadius = '8px';
+        item.style.overflow = 'hidden';
+        item.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+        item.style.border = '1px solid var(--background-modifier-border)';
+        item.style.backgroundColor = 'var(--background-secondary)';
+        item.style.display = 'flex';
+        item.style.flexDirection = 'column';
+        item.style.cursor = 'grab';
+
+        item.style.transition = 'transform 0.2s, opacity 0.2s';
+
+        // 拖拽排序
+        item.draggable = true;
+        item.addEventListener('dragstart', (e) => {
+            e.stopPropagation();
+            if (e.dataTransfer) {
+                e.dataTransfer.setData('duallink-gallery-index', index.toString());
+                e.dataTransfer.effectAllowed = 'move';
+            }
+            setTimeout(() => {
+                item.style.opacity = '0.4';
+            }, 0);
+        });
+        item.addEventListener('dragend', (e) => {
+            item.style.opacity = '1';
+            item.style.border = '1px solid var(--background-modifier-border)';
+        });
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'move';
+            }
+            item.style.border = '2px dashed var(--interactive-accent)';
+        });
+        item.addEventListener('dragleave', (e) => {
+            item.style.border = '1px solid var(--background-modifier-border)';
+        });
+        item.addEventListener('drop', (e) => {
+            e.preventDefault();
+            item.style.border = '1px solid var(--background-modifier-border)';
+            if (!e.dataTransfer) return;
+            
+            const originIndexStr = e.dataTransfer.getData('duallink-gallery-index');
+            if (!originIndexStr) return;
+            
+            const originIndex = parseInt(originIndexStr, 10);
+            if (originIndex === index || isNaN(originIndex)) return;
+            
+            const newImages = [...images];
+            const [draggedImg] = newImages.splice(originIndex, 1);
+            newImages.splice(index, 0, draggedImg);
+            
+            updateCodeBlock(columns, newImages);
+        });
+
+        item.addEventListener('mouseenter', () => {
+            if (el.closest('.markdown-reading-view')) return;
+            item.style.transform = 'scale(1.02)';
+        });
+        item.addEventListener('mouseleave', () => {
+            if (el.closest('.markdown-reading-view')) return;
+            item.style.transform = 'none';
+        });
+
+        // 双击放大预览
+        item.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            const media = item.querySelector('img, video') as HTMLImageElement | HTMLVideoElement;
+            if (!media) return;
+
+            const overlay = document.body.createEl('div');
+            overlay.style.position = 'fixed';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100vw';
+            overlay.style.height = '100vh';
+            overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.85)';
+            overlay.style.zIndex = '99999';
+            overlay.style.display = 'flex';
+            overlay.style.justifyContent = 'center';
+            overlay.style.alignItems = 'center';
+            overlay.style.cursor = 'zoom-out';
+            // overlay.style.backdropFilter = 'blur(4px)'; // optional, can be slow
+
+            let clone: HTMLElement;
+            if (media.tagName.toLowerCase() === 'img') {
+                clone = document.createElement('img');
+                (clone as HTMLImageElement).src = (media as HTMLImageElement).src;
+            } else {
+                clone = document.createElement('video');
+                (clone as HTMLVideoElement).src = (media as HTMLVideoElement).src;
+                (clone as HTMLVideoElement).controls = true;
+                (clone as HTMLVideoElement).autoplay = true;
+            }
+
+            clone.style.maxWidth = '90vw';
+            clone.style.maxHeight = '90vh';
+            clone.style.objectFit = 'contain';
+            clone.style.boxShadow = '0 10px 40px rgba(0,0,0,0.5)';
+            clone.style.borderRadius = '8px';
+            clone.style.cursor = 'default';
+            
+            // 阻止点击图片时关闭
+            clone.addEventListener('click', (e2) => {
+                e2.stopPropagation();
+            });
+
+            overlay.appendChild(clone);
+
+            // 关闭按钮
+            const closeBtn = overlay.createEl('div', { text: '✕' });
+            closeBtn.style.position = 'absolute';
+            closeBtn.style.top = '20px';
+            closeBtn.style.right = '20px';
+            closeBtn.style.width = '40px';
+            closeBtn.style.height = '40px';
+            closeBtn.style.backgroundColor = 'rgba(0,0,0,0.5)';
+            closeBtn.style.color = 'white';
+            closeBtn.style.borderRadius = '50%';
+            closeBtn.style.display = 'flex';
+            closeBtn.style.justifyContent = 'center';
+            closeBtn.style.alignItems = 'center';
+            closeBtn.style.fontSize = '20px';
+            closeBtn.style.cursor = 'pointer';
+            closeBtn.style.transition = 'background-color 0.2s';
+            
+            closeBtn.addEventListener('mouseenter', () => closeBtn.style.backgroundColor = 'rgba(255,255,255,0.2)');
+            closeBtn.addEventListener('mouseleave', () => closeBtn.style.backgroundColor = 'rgba(0,0,0,0.5)');
+
+            overlay.addEventListener('click', () => {
+                overlay.remove();
+            });
+            
+            // 支持 ESC 关闭
+            const escListener = (e2: KeyboardEvent) => {
+                if (e2.key === 'Escape') {
+                    overlay.remove();
+                    document.removeEventListener('keydown', escListener);
+                }
+            };
+            document.addEventListener('keydown', escListener);
+            
+            overlay.addEventListener('remove', () => {
+                document.removeEventListener('keydown', escListener);
+            });
+        });
+
+        // 修改按钮
+        const editImageBtn = item.createEl('div', { text: '✎' });
+        editImageBtn.style.position = 'absolute';
+        editImageBtn.style.top = '4px';
+        editImageBtn.style.left = '4px';
+        editImageBtn.style.width = '20px';
+        editImageBtn.style.height = '20px';
+        editImageBtn.style.background = 'transparent';
+        editImageBtn.style.color = 'rgba(255, 255, 255, 0.8)';
+        editImageBtn.style.borderRadius = '50%';
+        editImageBtn.style.display = 'flex';
+        editImageBtn.style.justifyContent = 'center';
+        editImageBtn.style.alignItems = 'center';
+        editImageBtn.style.cursor = 'pointer';
+        editImageBtn.style.opacity = '0';
+        editImageBtn.style.transition = 'opacity 0.2s, color 0.2s';
+        editImageBtn.style.zIndex = '5';
+        editImageBtn.style.fontSize = '14px';
+        editImageBtn.style.textShadow = '0 1px 2px rgba(0,0,0,0.8)';
+        editImageBtn.title = '替换此图片';
+        
+        editImageBtn.addEventListener('mouseenter', () => editImageBtn.style.color = 'var(--interactive-accent)');
+        editImageBtn.addEventListener('mouseleave', () => editImageBtn.style.color = 'rgba(255, 255, 255, 0.8)');
+
+        // 删除按钮
+        const removeBtn = item.createEl('div', { text: '✕' });
+        removeBtn.style.position = 'absolute';
+        removeBtn.style.top = '4px';
+        removeBtn.style.left = '28px';
+        removeBtn.style.width = '20px';
+        removeBtn.style.height = '20px';
+        removeBtn.style.background = 'transparent';
+        removeBtn.style.color = 'rgba(255, 255, 255, 0.8)';
+        removeBtn.style.borderRadius = '50%';
+        removeBtn.style.display = 'flex';
+        removeBtn.style.justifyContent = 'center';
+        removeBtn.style.alignItems = 'center';
+        removeBtn.style.cursor = 'pointer';
+        removeBtn.style.opacity = '0';
+        removeBtn.style.transition = 'opacity 0.2s, color 0.2s';
+        removeBtn.style.zIndex = '5';
+        removeBtn.style.fontSize = '14px';
+        removeBtn.style.textShadow = '0 1px 2px rgba(0,0,0,0.8)';
+        removeBtn.title = '移除此图片';
+        
+        removeBtn.addEventListener('mouseenter', () => removeBtn.style.color = 'var(--background-modifier-error)');
+        removeBtn.addEventListener('mouseleave', () => removeBtn.style.color = 'rgba(255, 255, 255, 0.8)');
+        
+        item.addEventListener('mouseenter', () => {
+            if (el.closest('.markdown-reading-view')) return;
+            removeBtn.style.opacity = '1';
+            editImageBtn.style.opacity = '1';
+        });
+        item.addEventListener('mouseleave', () => {
+            removeBtn.style.opacity = '0';
+            editImageBtn.style.opacity = '0';
+        });
+        
+        removeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (el.closest('.markdown-reading-view')) return;
+            const newImages = [...images];
+            newImages.splice(index, 1);
+            updateCodeBlock(columns, newImages);
+        });
+
+        editImageBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (el.closest('.markdown-reading-view')) return;
+            const { Notice, MarkdownView } = require('obsidian');
+            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!view) return;
+            
+            new PathPromptModal(this, '', (inputPath: string) => {
+                 if(!inputPath) return;
+                 const adapter = this.app.vault.adapter;
+                 const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
+                 let newSyntax = '';
+                 
+                 const cleanP = inputPath.replace(/['"]/g, '').trim();
+                 let isInternal = false;
+                 let internalPath = '';
+                 if (vaultBasePath && cleanP.startsWith(vaultBasePath)) {
+                     isInternal = true;
+                     internalPath = cleanP.substring(vaultBasePath.length).replace(/^[/\\\\]+/, '').replace(/\\\\/g, '/');
+                 }
+                 if (isInternal) {
+                     newSyntax = \`![[\${internalPath}]]\`;
+                 } else {
+                     let appendPath = cleanP.startsWith('/') ? cleanP.substring(1) : cleanP;
+                     appendPath = appendPath.split('/').map(c => encodeURIComponent(c)).join('/');
+                     appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
+                     newSyntax = \`![](<file:///\${appendPath}>)\`;
+                 }
+                 const newImages = [...images];
+                 newImages[index] = newSyntax;
+                 updateCodeBlock(columns, newImages);
+            }).open();
+        });
+
+        const { MarkdownRenderer } = require('obsidian');
+        MarkdownRenderer.renderMarkdown(imgSource, item, ctx.sourcePath, this);
+        
+        setTimeout(() => {
+            const allImgs = Array.from(item.querySelectorAll('img'));
+            // 修复由于 markdown 默认把 file:///...mp4 渲染成 <img> 的问题
+            allImgs.forEach(img => {
+                const src = img.src || img.getAttribute('src');
+                if (src && /\\.(mp4|webm|mov|mkv)\$/i.test(src.split('?')[0])) {
+                    const video = document.createElement('video');
+                    video.src = src;
+                    video.controls = true;
+                    video.setAttribute('controlslist', 'nodownload'); // Optional nice touch
+                    img.parentNode?.replaceChild(video, img);
+                }
+            });
+
+            const medias = item.querySelectorAll('img, video, .internal-embed');
+            medias.forEach(media => {
+                if (media instanceof HTMLElement) {
+                  media.style.width = '100%';
+                  media.style.height = '100%';
+                  media.style.objectFit = 'cover';
+                  media.style.display = 'block';
+                  media.style.borderRadius = '0';
+                  media.style.margin = '0';
+                  if (media.tagName.toLowerCase() === 'img') {
+                      media.style.pointerEvents = 'none';
+                  }
+                  media.setAttribute('draggable', 'false'); // Disable native drag
+                }
+            });
+            const ps = item.querySelectorAll('p');
+            ps.forEach(p => {
+                p.style.margin = '0';
+                p.style.padding = '0';
+            });
+        }, 50);
+      });
+
+      const remainingCols = columns - images.length;
+      if (remainingCols > 0) {
+          for (let i = 0; i < remainingCols; i++) {
+              const emptyCell = grid.createEl('div');
+              emptyCell.style.borderRadius = '8px';
+              emptyCell.style.border = '2px dashed var(--background-modifier-border)';
+              emptyCell.style.display = 'flex';
+              emptyCell.style.alignItems = 'center';
+              emptyCell.style.justifyContent = 'center';
+              emptyCell.style.cursor = 'pointer';
+              emptyCell.style.minHeight = '100px';
+              emptyCell.style.color = 'var(--text-muted)';
+              emptyCell.style.transition = 'all 0.2s';
+              
+              const updateIcon = () => {
+                  emptyCell.innerHTML = \`<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>\`;
+              };
+              updateIcon();
+              
+              emptyCell.addEventListener('mouseenter', () => {
+                  if (el.closest('.markdown-reading-view')) return;
+                  emptyCell.style.borderColor = 'var(--interactive-accent)';
+                  emptyCell.style.color = 'var(--interactive-accent)';
+                  emptyCell.style.transform = 'scale(1.02)';
+              });
+              emptyCell.addEventListener('mouseleave', () => {
+                  emptyCell.style.borderColor = 'var(--background-modifier-border)';
+                  emptyCell.style.color = 'var(--text-muted)';
+                  emptyCell.style.transform = 'scale(1)';
+              });
+              emptyCell.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  if (el.closest('.markdown-reading-view')) return;
+                  
+                  emptyCell.innerHTML = '';
+                  const loadingSpan = emptyCell.createEl('span', { text: '正在选择文件...' });
+                  loadingSpan.style.fontSize = '12px';
+                  loadingSpan.style.color = 'var(--interactive-accent)';
+                  
+                  const { Notice, MarkdownView } = require('obsidian');
+                  const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+                  if (!view) { 
+                      updateIcon();
+                      return; 
+                  }
+                  
+                  new PathPromptModal(this, '', (inputPath: string) => {
+                       if(!inputPath) { 
+                           updateIcon();
+                           return; 
+                       }
+                       const adapter = this.app.vault.adapter;
+                       const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
+                       let newSyntax = '';
+                       
+                       const cleanP = inputPath.replace(/['"]/g, '').trim();
+                       let isInternal = false;
+                       let internalPath = '';
+                       if (vaultBasePath && cleanP.startsWith(vaultBasePath)) {
+                           isInternal = true;
+                           internalPath = cleanP.substring(vaultBasePath.length).replace(/^[/\\\\]+/, '').replace(/\\\\/g, '/');
+                       }
+                       if (isInternal) {
+                           newSyntax = \`![[\${internalPath}]]\`;
+                       } else {
+                           let appendPath = cleanP.startsWith('/') ? cleanP.substring(1) : cleanP;
+                           appendPath = appendPath.split('/').map(c => encodeURIComponent(c)).join('/');
+                           appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
+                           newSyntax = \`![](<file:///\${appendPath}>)\`;
+                       }
+                       updateCodeBlock(columns, [...images, newSyntax]);
+                  }).open();
+              });
+          }
+      }
+
+    });
+
     // 6. 注册设置管理面板
     this.addSettingTab(new LocalFileLinkerSettingTab(this.app, this));
   }
 
   onunload() {
     console.log('正在卸载 Obsidian 本地物理链接插件 (DualLink)...');
+    const styleEl = document.getElementById('duallink-gallery-styles');
+    if (styleEl) {
+        styleEl.remove();
+    }
   }
 
   async loadSettings() {
@@ -256,6 +891,26 @@ export default class LocalFileLinkerPlugin extends Plugin {
     appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
 
     return \`\${hashPrefix}\${appendPath}\`;
+  }
+
+  public async findExternalFileRec(fileName: string, dir: string, maxDepth = 4, currentDepth = 0): Promise<string | null> {
+    if (currentDepth > maxDepth || !dir) return null;
+    const fs = require('fs');
+    const path = require('path');
+    try {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            if (entry.isDirectory()) {
+                const found = await this.findExternalFileRec(fileName, path.join(dir, entry.name), maxDepth, currentDepth + 1);
+                if (found) return found;
+            } else if (entry.name === fileName) {
+                return path.join(dir, entry.name);
+            }
+        }
+    } catch (e) {
+        // ignore errors like permission denied
+    }
+    return null;
   }
 
   /**
@@ -430,6 +1085,39 @@ export default class LocalFileLinkerPlugin extends Plugin {
     new PathPromptModal(this, selectedText, (inputPath, customName) => {
       if (!inputPath) return;
 
+      if (customName && customName.startsWith('____GALLERY_CONFIG_COLUMNS_')) {
+          const colsCount = customName.replace('____GALLERY_CONFIG_COLUMNS_', '');
+          const paths = inputPath.split('|||');
+          
+          let blockContent = \`\\\`\\\`\\\`duallink-gallery\\n{ "columns": \${colsCount} }\\n\`;
+          const adapter = this.app.vault.adapter;
+          const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
+          
+          paths.forEach(p => {
+              const cleanP = p.replace(/['"]/g, '').trim();
+              let isInternal = false;
+              let internalPath = '';
+              if (vaultBasePath && cleanP.startsWith(vaultBasePath)) {
+                  isInternal = true;
+                  internalPath = cleanP.substring(vaultBasePath.length).replace(/^[/\\\\]+/, '').replace(/\\\\/g, '/');
+              }
+              if (isInternal) {
+                  blockContent += \`![[\${internalPath}]]\\n\`;
+              } else {
+                  let appendPath = cleanP.startsWith('/') ? cleanP.substring(1) : cleanP;
+                  appendPath = appendPath.split('/').map(c => encodeURIComponent(c)).join('/');
+                  appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
+                  blockContent += \`![](<file:///\${appendPath}>)\\n\`;
+              }
+          });
+          blockContent += '\`\`\`\\n';
+          
+          const cursor = defaultEditor.getCursor();
+          defaultEditor.replaceRange(blockContent, cursor);
+          new Notice('✅ 已向文档焦点处注入了分栏组图！');
+          return;
+      }
+
       const cleanInputPath = inputPath.replace(/['"]/g, '').trim();
       const defaultName = cleanInputPath.split(/[/\\\\\\\\]/).pop() || '外部关联文件';
       const finalName = customName.trim() || defaultName;
@@ -482,6 +1170,11 @@ class PathPromptModal extends Modal {
   private currentMode: 'external' | 'internal' = 'external';
   private lastExternalPath: string = '';
 
+  private fileItemsMap: Map<string, HTMLElement> = new Map();
+  private selectedFiles: Set<any> = new Set();
+  private isMultiSelectMode: boolean = false;
+  private colsCount: number = 3;
+
   constructor(plugin: LocalFileLinkerPlugin, defaultName: string, onSubmit: (path: string, name: string) => void) {
     super(plugin.app);
     this.plugin = plugin;
@@ -498,18 +1191,24 @@ class PathPromptModal extends Modal {
     // 设置大尺寸弹窗
     this.modalEl.style.width = '80vw';
     this.modalEl.style.maxWidth = '1000px';
-    this.modalEl.style.height = '80vh';
+    this.modalEl.style.maxHeight = '80vh';
+    this.modalEl.style.minHeight = '40vh';
+    this.modalEl.style.height = 'auto'; // 根据内容自动高度，最大 80vh，最小 40vh
     this.modalEl.style.display = 'flex';
     this.modalEl.style.flexDirection = 'column';
     
-    contentEl.createEl('h2', { text: '插入本地物理文件关联', cls: 'modal-title' });
+    // 内容区的布局配置，使其能正确响应 flex
+    contentEl.style.display = 'flex';
+    contentEl.style.flexDirection = 'column';
+    contentEl.style.flex = '1';
+    contentEl.style.overflow = 'hidden';
 
     // 顶部设置区域
     const topArea = contentEl.createDiv();
     topArea.style.display = 'flex';
     topArea.style.flexDirection = 'column';
     topArea.style.gap = '12px';
-    topArea.style.marginBottom = '20px';
+    topArea.style.marginBottom = '12px';
     topArea.style.flexShrink = '0';
     
     // 1. 文件夹路径选择行
@@ -520,6 +1219,8 @@ class PathPromptModal extends Modal {
     
     this.pathInputEl = pathRow.createEl('input', { type: 'text', placeholder: '粘贴文件夹的绝对路径...' });
     this.pathInputEl.style.flex = '1';
+    this.pathInputEl.style.border = '0';
+    this.pathInputEl.style.boxShadow = 'none';
     this.pathInputEl.value = this.currentFolderPath;
     this.pathInputEl.addEventListener('change', (e) => {
         this.currentFolderPath = (e.target as HTMLInputElement).value;
@@ -534,7 +1235,10 @@ class PathPromptModal extends Modal {
     fileInput.style.display = 'none';
     document.body.appendChild(fileInput);
 
-    const browseBtn = pathRow.createEl('button', { text: '浏览 (选择文件夹)' });
+    const browseBtn = pathRow.createEl('button', { text: '浏览' });
+    browseBtn.style.boxShadow = 'none';
+    browseBtn.style.border = '0';
+    browseBtn.style.background = 'transparent';
     browseBtn.addEventListener('click', () => {
         try {
             // 首先尝试使用 Electron 系统原生的文件夹选择弹窗
@@ -597,16 +1301,19 @@ class PathPromptModal extends Modal {
     modeBtn.style.display = 'flex';
     modeBtn.style.alignItems = 'center';
     modeBtn.style.gap = '6px';
+    modeBtn.style.boxShadow = 'none';
+    modeBtn.style.border = '0';
+    modeBtn.style.background = 'transparent';
     modeBtn.title = '在外部绝对路径与当前 Obsidian 库目录模式之间切换';
     
     const updateModeBtn = () => {
         modeBtn.empty();
         if (this.currentMode === 'external') {
             setIcon(modeBtn, 'link-2-off');
-            modeBtn.createSpan({ text: '外部路径模式' });
+            modeBtn.createSpan({ text: '外' });
         } else {
             setIcon(modeBtn, 'link-2');
-            modeBtn.createSpan({ text: '内部路径模式' });
+            modeBtn.createSpan({ text: '内' });
         }
     };
     updateModeBtn();
@@ -645,6 +1352,8 @@ class PathPromptModal extends Modal {
     
     const searchInput = filterRow.createEl('input', { type: 'text', placeholder: '搜索该目录下的文件...' });
     searchInput.style.width = '250px';
+    searchInput.style.border = '0';
+    searchInput.style.boxShadow = 'none';
     searchInput.addEventListener('input', (e) => {
         this.searchQuery = (e.target as HTMLInputElement).value.toLowerCase();
         this.renderFiles();
@@ -658,7 +1367,47 @@ class PathPromptModal extends Modal {
     const tabsDiv = filterRow.createDiv();
     tabsDiv.style.display = 'flex';
     tabsDiv.style.gap = '8px';
+    tabsDiv.style.flex = '1';
+
+    // 2.5 多选模式与栏数控制（自动控制）
+    const galleryControls = filterRow.createDiv();
+    galleryControls.style.display = 'flex';
+    galleryControls.style.gap = '10px';
+    galleryControls.style.alignItems = 'center';
+
+    const insertGalleryBtn = galleryControls.createEl('button', { text: '插入多项' });
+    insertGalleryBtn.style.display = 'none';
+    insertGalleryBtn.style.border = '0';
+    insertGalleryBtn.style.boxShadow = 'none';
+    insertGalleryBtn.style.backgroundColor = 'var(--interactive-accent)';
+    insertGalleryBtn.style.color = 'var(--text-on-accent)';
+
+    insertGalleryBtn.addEventListener('click', () => {
+        if (this.selectedFiles.size === 0) {
+            new Notice('请先选择至少一个图像');
+            return;
+        }
+        const selected = Array.from(this.selectedFiles);
+        this.close();
+        
+        const paths = selected.map(f => f.path).join('|||');
+        const count = selected.length;
+        this.colsCount = count > 5 ? 5 : count;
+        this.onSubmit(paths, \`____GALLERY_CONFIG_COLUMNS_\${this.colsCount}\`);
+    });
     
+    // helper to update btn from items click
+    (this as any).updateInsertBtn = () => {
+        if (this.selectedFiles.size > 0) {
+            insertGalleryBtn.style.display = 'block';
+            const count = this.selectedFiles.size;
+            const cols = count > 5 ? 5 : count;
+            insertGalleryBtn.textContent = \`插入 \${count} 张图 (分\${cols}栏)\`;
+        } else {
+            insertGalleryBtn.style.display = 'none';
+        }
+    };
+
     const tabs = [
         { id: 'all', label: '全部' },
         { id: 'image', label: '图片' },
@@ -669,6 +1418,7 @@ class PathPromptModal extends Modal {
     tabs.forEach(tab => {
         const tabEl = tabsDiv.createEl('button', { text: tab.label });
         tabEl.style.boxShadow = 'none';
+        tabEl.style.border = '0';
         if (this.currentTab === tab.id) {
             tabEl.style.backgroundColor = 'var(--interactive-accent)';
             tabEl.style.color = 'var(--text-on-accent)';
@@ -688,7 +1438,7 @@ class PathPromptModal extends Modal {
     // 内容显示区
     this.contentContainer = contentEl.createDiv();
     this.contentContainer.style.flex = '1';
-    this.contentContainer.style.border = '1px solid var(--background-modifier-border)';
+    this.contentContainer.style.border = '0';
     this.contentContainer.style.borderRadius = '8px';
     this.contentContainer.style.padding = '16px';
     this.contentContainer.style.overflowY = 'auto';
@@ -803,7 +1553,7 @@ class PathPromptModal extends Modal {
       
       filtered.forEach(file => {
           const item = this.contentContainer.createDiv();
-          item.style.border = '1px solid var(--background-modifier-border)';
+          item.style.border = '0';
           item.style.borderRadius = '8px';
           item.style.padding = '8px';
           item.style.display = 'flex';
@@ -816,12 +1566,10 @@ class PathPromptModal extends Modal {
           item.addEventListener('mouseenter', () => {
               item.style.transform = 'translateY(-2px)';
               item.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-              item.style.borderColor = 'var(--interactive-accent)';
           });
           item.addEventListener('mouseleave', () => {
               item.style.transform = 'none';
               item.style.boxShadow = 'none';
-              item.style.borderColor = 'var(--background-modifier-border)';
           });
           
           // Icon or Preview
@@ -877,7 +1625,14 @@ class PathPromptModal extends Modal {
           nameSpan.style.width = '100%';
           nameSpan.title = file.name;
           
-          item.addEventListener('click', () => {
+          let isSelected = Array.from(this.selectedFiles).some((f: any) => f.path === file.path);
+          if (isSelected) {
+              item.style.borderColor = 'var(--interactive-accent)';
+              item.style.backgroundColor = 'rgba(var(--interactive-accent-rgb, 136, 57, 239), 0.15)';
+              item.style.boxShadow = '0 0 0 2px var(--interactive-accent)';
+          }
+
+          item.addEventListener('click', (e) => {
               if (file.isDirectory) {
                   this.currentFolderPath = file.path;
                   this.searchQuery = '';
@@ -885,10 +1640,35 @@ class PathPromptModal extends Modal {
                   if (searchInput) searchInput.value = '';
                   this.loadFiles();
               } else {
-                  this.inputPath = file.path;
-                  const nameToUse = this.customName || file.name;
-                  this.close();
-                  this.onSubmit(this.inputPath, nameToUse);
+                  if (e.ctrlKey || e.metaKey) {
+                      // Toggle selection
+                      if (isSelected) {
+                          const toRemove = Array.from(this.selectedFiles).find((f: any) => f.path === file.path);
+                          this.selectedFiles.delete(toRemove);
+                          isSelected = false;
+                          item.style.borderColor = 'var(--background-modifier-border)';
+                          item.style.backgroundColor = 'var(--background-secondary)';
+                          item.style.boxShadow = 'none';
+                      } else {
+                          this.selectedFiles.add(file);
+                          isSelected = true;
+                          item.style.borderColor = 'var(--interactive-accent)';
+                          item.style.backgroundColor = 'rgba(var(--interactive-accent-rgb, 136, 57, 239), 0.15)';
+                          item.style.boxShadow = '0 0 0 2px var(--interactive-accent)';
+                      }
+                      this.isMultiSelectMode = this.selectedFiles.size > 0;
+                      if ((this as any).updateInsertBtn) (this as any).updateInsertBtn();
+                  } else {
+                      this.inputPath = file.path;
+                      const nameToUse = this.customName || file.name;
+                      this.close();
+                      const isMedia = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'mp4', 'webm', 'mov', 'mkv'].includes(file.ext.toLowerCase());
+                      if (isMedia) {
+                          this.onSubmit(this.inputPath, \`____GALLERY_CONFIG_COLUMNS_1\`);
+                      } else {
+                          this.onSubmit(this.inputPath, nameToUse);
+                      }
+                  }
               }
           });
       });

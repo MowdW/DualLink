@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "clean": "rm -rf dist main.js",
+    "clean": "powershell -Command \"Remove-Item -Recurse -Force dist, main.js -ErrorAction SilentlyContinue\"",
     "type-check": "tsc --noEmit",
     "build:web": "vite build",
     "build:plugin": "node esbuild.config.mjs production",
