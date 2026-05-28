@@ -144,7 +144,9 @@ export default class LocalFileLinkerPlugin extends Plugin {
           if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
             const video = document.createElement('video');
             video.src = convertPath;
-            video.controls = true;
+            video.controls = false;
+            video.addEventListener('mouseenter', () => video.controls = true);
+            video.addEventListener('mouseleave', () => video.controls = false);
             video.style.maxWidth = '100%';
             video.style.borderRadius = '8px';
             video.style.marginTop = '8px';
@@ -187,7 +189,9 @@ export default class LocalFileLinkerPlugin extends Plugin {
             if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
               const video = document.createElement('video');
               video.src = convertPath;
-              video.controls = true;
+              video.controls = false;
+              video.addEventListener('mouseenter', () => video.controls = true);
+              video.addEventListener('mouseleave', () => video.controls = false);
               video.style.maxWidth = '100%';
               video.style.borderRadius = '8px';
               a.replaceWith(video);
@@ -315,10 +319,20 @@ export default class LocalFileLinkerPlugin extends Plugin {
       galleryWrapper.style.position = 'relative';
 
       const grid = galleryWrapper.createEl('div');
-      grid.style.display = 'grid';
-      grid.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+      grid.style.display = 'flex';
       grid.style.gap = '12px';
-      grid.style.alignItems = 'start';
+      grid.style.alignItems = 'flex-start';
+
+      const colEls: HTMLElement[] = [];
+      for (let i = 0; i < columns; i++) {
+          const col = grid.createDiv();
+          col.style.display = 'flex';
+          col.style.flexDirection = 'column';
+          col.style.gap = '12px';
+          col.style.flex = '1';
+          col.style.minWidth = '0';
+          colEls.push(col);
+      }
       
       const colControls = galleryWrapper.createDiv({ cls: 'duallink-gallery-control' });
       colControls.style.position = 'absolute';
@@ -447,8 +461,46 @@ export default class LocalFileLinkerPlugin extends Plugin {
 
       galleryWrapper.style.padding = '0 36px';
 
+      const items: HTMLElement[] = [];
+      let lastLayout = '';
+      
+      const distributeItems = () => {
+          const colHeights = new Array(columns).fill(0);
+          const targetCols = new Array(items.length);
+          
+          items.forEach((item, idx) => {
+              let shortestIdx = 0;
+              let minHeight = colHeights[0];
+              for (let i = 1; i < columns; i++) {
+                  if (colHeights[i] < minHeight) {
+                      minHeight = colHeights[i];
+                      shortestIdx = i;
+                  }
+              }
+              targetCols[idx] = shortestIdx;
+              const h = item.getBoundingClientRect().height;
+              colHeights[shortestIdx] += (h > 0 ? h : 100) + 12;
+          });
+
+          const newLayout = targetCols.join(',');
+          if (lastLayout !== newLayout) {
+              lastLayout = newLayout;
+              targetCols.forEach((colIdx, itemIdx) => {
+                  colEls[colIdx].appendChild(items[itemIdx]);
+              });
+          }
+      };
+
+      const resizeObserver = new ResizeObserver(() => {
+          window.requestAnimationFrame(() => {
+              distributeItems();
+          });
+      });
+
       images.forEach((imgSource, index) => {
-        const item = grid.createEl('div');
+        const item = document.createElement('div');
+        items.push(item);
+        resizeObserver.observe(item);
         
         item.style.position = 'relative';
         item.style.borderRadius = '8px';
@@ -709,7 +761,9 @@ export default class LocalFileLinkerPlugin extends Plugin {
                 if (src && /\.(mp4|webm|mov|mkv)$/i.test(src.split('?')[0])) {
                     const video = document.createElement('video');
                     video.src = src;
-                    video.controls = true;
+                    video.controls = false;
+                    video.addEventListener('mouseenter', () => video.controls = true);
+                    video.addEventListener('mouseleave', () => video.controls = false);
                     video.setAttribute('controlslist', 'nodownload'); // Optional nice touch
                     img.parentNode?.replaceChild(video, img);
                 }
@@ -741,7 +795,9 @@ export default class LocalFileLinkerPlugin extends Plugin {
       const remainingCols = columns - images.length;
       if (remainingCols > 0) {
           for (let i = 0; i < remainingCols; i++) {
-              const emptyCell = grid.createEl('div');
+              const emptyCell = document.createElement('div');
+              items.push(emptyCell);
+              resizeObserver.observe(emptyCell);
               emptyCell.style.borderRadius = '8px';
               emptyCell.style.border = '2px dashed var(--background-modifier-border)';
               emptyCell.style.display = 'flex';

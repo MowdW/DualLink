@@ -1,11 +1,10 @@
 {
-  "id": "obsidian-local-file-linker",
+  "id": "obsidian-dual-link",
   "name": "DualLink",
   "version": "1.0.0",
   "minAppVersion": "1.0.0",
-  "description": "无缝管理并联通本地硬盘上的大容量资源文件。支持拖拽生成 local-file:// 绝对路径软链接，及鼠标悬浮实时卡片式预览、一键唤起系统原生应用直接打开，极速流畅，安全防沙箱隔离。",
-  "author": "Google AI Studio Developer",
-  "authorUrl": "https://ai.studio/build",
-  "isDesktopOnly": true,
-  "styles": ["styles.css"]
+  "description": "将本地和保险库中的文件嵌入到您的文档中。支持图片、音频和视频的内联渲染。",
+  "author": "马可菠萝",
+  "authorUrl": "https://github.com/MowdW/DualLink",
+  "isDesktopOnly": true
 }
