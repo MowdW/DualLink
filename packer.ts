@@ -30,14 +30,46 @@ export function isSameFile(path1: string, path2: string): boolean {
 
 export function hasOtherReferences(app: App, file: any, currentPath: string): boolean {
   try {
-    const backlinks = (app.metadataCache as any).getBacklinksForFile
-      ? (app.metadataCache as any).getBacklinksForFile(file)
-      : null;
-    if (!backlinks || !backlinks.data) return false;
-    for (const sourcePath of Object.keys(backlinks.data)) {
-      if (sourcePath !== currentPath) return true;
+    const resolvedLinks = (app.metadataCache as any).resolvedLinks;
+    if (resolvedLinks) {
+      for (const [sourcePath, links] of Object.entries(resolvedLinks)) {
+        if (sourcePath === currentPath) continue;
+        const linkMap = links as Record<string, number>;
+        if (linkMap[file.path]) return true;
+      }
     }
   } catch (e) {}
+
+  try {
+    const backlinks = (app.metadataCache as any).getBacklinksForFile?.(file);
+    if (backlinks?.data) {
+      for (const sourcePath of Object.keys(backlinks.data)) {
+        if (sourcePath !== currentPath) return true;
+      }
+    }
+  } catch (e) {}
+
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const vaultBase = (app.vault.adapter as any).getBasePath?.();
+    if (!vaultBase) return false;
+
+    const allFiles = app.vault.getMarkdownFiles();
+    const lowerName = file.name.toLowerCase();
+
+    for (const mf of allFiles) {
+      if (mf.path === currentPath) continue;
+      try {
+        const content = fs.readFileSync(path.join(vaultBase, mf.path), 'utf8');
+        const lower = content.toLowerCase();
+        if (lower.includes(`![[${lowerName}`) || lower.includes(`[[${lowerName}`)) {
+          return true;
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+
   return false;
 }
 
@@ -291,6 +323,7 @@ export async function packOut(plugin: any): Promise<void> {
   let successCount = 0;
   let skipCount = 0;
   let failCount = 0;
+  let copyCount = 0;
   const processed = new Set<string>();
 
   const getUniqueName = (dir: string, name: string): string => {
@@ -329,10 +362,9 @@ export async function packOut(plugin: any): Promise<void> {
     const destFullPath = path.join(externalDir, fileName);
 
     const hasOtherRefs = hasOtherReferences(plugin.app, dest, activeFile.path);
+    const forceCopyForFile = hasOtherRefs && !isCopyMode;
     if (hasOtherRefs) {
-      skipCount++;
-      processed.add(linkPath);
-      continue;
+      new Notice(`⚠️ "${fileName}" 被其他文档引用，将复制而非剪切到外部目录。`, 5000);
     }
 
     let finalName = fileName;
@@ -352,19 +384,20 @@ export async function packOut(plugin: any): Promise<void> {
           .substring(externalDir.length)
           .replace(/\\/g, '/')
           .replace(/^\//, '');
-        if (!isCopyMode) {
+        if (!isCopyMode && !forceCopyForFile) {
           fs.unlinkSync(srcFullPath);
           plugin.app.vault.trigger('delete', dest);
         }
       } else {
         finalName = getUniqueName(externalDir, fileName);
+        new Notice(`⚠️ "${fileName}" 与外部目录已有同名不同内容的文件，已重命名为 "${finalName}"。`, 5000);
       }
     }
 
     const finalDestPath = path.join(externalDir, finalName);
     try {
       if (!skipMove) {
-        if (isCopyMode) {
+        if (isCopyMode || forceCopyForFile) {
           fs.copyFileSync(srcFullPath, finalDestPath);
         } else {
           try {
@@ -393,6 +426,7 @@ export async function packOut(plugin: any): Promise<void> {
 
       replacements.push({ old: match[0], new: newSyntax });
       successCount++;
+      if (hasOtherRefs) copyCount++;
     } catch (e) {
       failCount++;
     }
@@ -411,7 +445,8 @@ export async function packOut(plugin: any): Promise<void> {
   }
 
   await plugin.app.vault.modify(activeFile, newContent);
-  new Notice(`DualOut 完成：成功 ${successCount} 个，跳过 ${skipCount} 个，失败 ${failCount} 个。`);
+  const copyMsg = copyCount > 0 ? `，其中 ${copyCount} 个被其他文档引用已复制保留` : '';
+  new Notice(`DualOut 完成：成功 ${successCount} 个${copyMsg}，跳过 ${skipCount} 个，失败 ${failCount} 个。`);
 }
 
 class FileDedupModal extends Modal {

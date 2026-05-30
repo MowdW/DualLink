@@ -59,30 +59,6 @@ export default class LocalFileLinkerPlugin extends Plugin {
     console.log('正在加载 Obsidian 外部物理文件关联映射插件 (DualLink)...');
     await this.loadSettings();
 
-    // 注入样式去除 Live Preview 默认边框
-    if (!document.getElementById('duallink-gallery-styles')) {
-        const styleEl = document.createElement('style');
-        styleEl.id = 'duallink-gallery-styles';
-        styleEl.textContent = `
-            .markdown-source-view.mod-cm6 .cm-embed-block:has(.duallink-gallery-container),
-            .markdown-source-view.mod-cm6 .cm-preview-code-block:has(.duallink-gallery-container) {
-                border: 0 !important;
-                box-shadow: none !important;
-                background-color: transparent !important;
-            }
-            .markdown-source-view.mod-cm6 .cm-embed-block:has(.duallink-gallery-container):hover,
-            .markdown-source-view.mod-cm6 .cm-preview-code-block:has(.duallink-gallery-container):hover {
-                box-shadow: none !important;
-            }
-            .markdown-reading-view .duallink-gallery-add-btn,
-            .markdown-reading-view .duallink-gallery-sub-btn,
-            .markdown-reading-view .duallink-gallery-plus-btn {
-                display: none !important;
-            }
-        `;
-        document.head.appendChild(styleEl);
-    }
-
     // 注册自定义 local-file:// 安全协议解析与快捷点击动作
     this.registerObsidianProtocol();
 
@@ -310,10 +286,6 @@ export default class LocalFileLinkerPlugin extends Plugin {
 
   onunload() {
     console.log('正在卸载 Obsidian 本地物理链接插件 (DualLink)...');
-    const styleEl = document.getElementById('duallink-gallery-styles');
-    if (styleEl) {
-        styleEl.remove();
-    }
   }
 
   async loadSettings() {
