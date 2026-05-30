@@ -297,8 +297,13 @@ export default function App() {
               b.href = '/manifest.json';
               b.download = 'manifest.json';
               b.click();
+
+              const c = document.createElement('a');
+              c.href = '/styles.css';
+              c.download = 'styles.css';
+              c.click();
               
-              triggerNotification('正在下载插件核心文件 (main.js & manifest.json)', 'success');
+              triggerNotification('正在下载完整插件包 (main.js, manifest.json & styles.css)', 'success');
             }}
             className="flex items-center gap-1.5 px-3 py-1 bg-violet-600 hover:bg-violet-500 rounded-md text-white text-[11px] font-medium transition-colors shadow-sm"
           >

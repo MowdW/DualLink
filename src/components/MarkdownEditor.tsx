@@ -31,6 +31,249 @@ export default function MarkdownEditor({
   const [editorMode, setEditorMode] = useState<'edit' | 'split' | 'preview'>('split');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const [replacingLineIndex, setReplacingLineIndex] = useState<number | null>(null);
+  const [addingToBlockItems, setAddingToBlockItems] = useState<{ text: string; lineIndex: number }[] | null>(null);
+
+  const handleUpdateColumns = (targetColumns: number, contentItems: { text: string; lineIndex: number }[]) => {
+    const lines = note.content.split('\n');
+    const firstItem = contentItems[0];
+    if (firstItem && firstItem.text.trim().startsWith('{')) {
+        try {
+            const config = JSON.parse(firstItem.text.trim());
+            config.columns = targetColumns;
+            lines[firstItem.lineIndex] = JSON.stringify(config);
+        } catch (e) {
+            lines[firstItem.lineIndex] = `{ "columns": ${targetColumns} }`;
+        }
+    } else if (firstItem) {
+        lines.splice(firstItem.lineIndex, 0, `{ "columns": ${targetColumns} }`);
+    }
+    onUpdateNoteContent(lines.join('\n'));
+    onNotification(`已成功将分栏组图列数调整为 ${targetColumns}。`, 'success');
+  };
+
+  const handleAppendImage = (contentItems: { text: string; lineIndex: number }[], file: LocalFile) => {
+    const lines = note.content.split('\n');
+    const cleanPath = file.systemPath.replace(/\\/g, '/');
+    const pathNoSlash = cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
+    const ext = file.systemPath.split('.').pop()?.toLowerCase() || '';
+    const isImage = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext);
+    
+    let newSyntax = '';
+    if (isImage) {
+        const pathNoLeadingSlash = pathNoSlash.startsWith('/') ? pathNoSlash.substring(1) : pathNoSlash;
+        newSyntax = `![🖼 ${file.name}](<file:///${pathNoLeadingSlash}>)`;
+    } else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
+        newSyntax = `<video src="app://local${pathNoSlash}" controls></video>`;
+    } else if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext)) {
+        newSyntax = `<audio src="app://local${pathNoSlash}" controls></audio>`;
+    } else {
+        newSyntax = `[📄 ${file.name}](<local-file://${file.systemPath}>)`;
+    }
+    
+    const lastItem = contentItems[contentItems.length - 1];
+    const insertIndex = lastItem.lineIndex + 1;
+    
+    lines.splice(insertIndex, 0, newSyntax);
+    onUpdateNoteContent(lines.join('\n'));
+    setAddingToBlockItems(null);
+    onNotification(`已成功向组图中追加并排入图片 "${file.name}"。`, 'success');
+  };
+
+  const handleRemoveGalleryImage = (lineIndex: number) => {
+    const lines = note.content.split('\n');
+    lines.splice(lineIndex, 1); // Delete the exact line!
+    onUpdateNoteContent(lines.join('\n'));
+    onNotification('已成功从分栏组图中移除该图片，Markdown 内容已同步联动修改。', 'success');
+  };
+
+  const handleReplaceGalleryImage = (lineIndex: number, file: LocalFile) => {
+    const lines = note.content.split('\n');
+    const cleanPath = file.systemPath.replace(/\\/g, '/');
+    const pathNoSlash = cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
+    const ext = file.systemPath.split('.').pop()?.toLowerCase() || '';
+    const isImage = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext);
+    
+    let newSyntax = '';
+    if (isImage) {
+        const pathNoLeadingSlash = pathNoSlash.startsWith('/') ? pathNoSlash.substring(1) : pathNoSlash;
+        newSyntax = `![🖼 ${file.name}](<file:///${pathNoLeadingSlash}>)`;
+    } else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
+        newSyntax = `<video src="app://local${pathNoSlash}" controls></video>`;
+    } else if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext)) {
+        newSyntax = `<audio src="app://local${pathNoSlash}" controls></audio>`;
+    } else {
+        newSyntax = `[📄 ${file.name}](<local-file://${file.systemPath}>)`;
+    }
+    
+    lines[lineIndex] = newSyntax;
+    onUpdateNoteContent(lines.join('\n'));
+    setReplacingLineIndex(null);
+    onNotification(`已成功替换该单元图片为 "${file.name}"。`, 'success');
+  };
+
+  const renderGalleryBlock = (contentItems: { text: string; lineIndex: number }[], idx: number) => {
+    let columns = 3;
+    let images: { path: string; rawLine: string; lineIndex: number }[] = [];
+    let isConfig = true;
+
+    for (const item of contentItems) {
+      const trimmed = item.text.trim();
+      if (!trimmed) continue;
+      if (isConfig && trimmed.startsWith('{')) {
+        try {
+          const config = JSON.parse(trimmed);
+          if (config.columns) columns = config.columns;
+        } catch (e) { }
+        isConfig = false;
+      } else {
+        isConfig = false;
+        
+        let path = trimmed;
+        if (trimmed.startsWith('![[') && trimmed.endsWith(']]')) {
+            path = trimmed.substring(3, trimmed.length - 2);
+        } else {
+            const labelMatch = trimmed.match(/!\[([^\]]*)\]\((?:<([^>]+)>|([^)]+))\)/);
+            if (labelMatch) {
+                path = labelMatch[2] || labelMatch[3];
+            }
+        }
+        
+        images.push({ path, rawLine: item.text, lineIndex: item.lineIndex });
+      }
+    }
+
+    const resolvedImages = images.map(img => {
+      let absolutePath = img.path;
+      if (absolutePath.startsWith('file:///')) {
+          absolutePath = decodeURIComponent(absolutePath.replace('file:///', '').replace('file://', ''));
+      } else if (absolutePath.startsWith('local-file://')) {
+          absolutePath = decodeURIComponent(absolutePath.replace('local-file://', ''));
+      } else if (absolutePath.startsWith('app://')) {
+          absolutePath = decodeURIComponent(absolutePath.replace('app://local/', '/').replace('app://local', ''));
+      }
+      
+      const matchedFile = localFiles.find(f => 
+          f.systemPath === absolutePath || 
+          f.systemPath.endsWith(absolutePath) || 
+          absolutePath.endsWith(f.systemPath) ||
+          f.name === absolutePath
+      );
+      
+      return {
+          ...img,
+          matchedFile,
+          previewUrl: matchedFile?.previewUrl
+      };
+    });
+
+    const gridColsClass = 
+      columns === 1 ? 'grid-cols-1' :
+      columns === 2 ? 'grid-cols-2' :
+      columns === 3 ? 'grid-cols-3' :
+      columns === 4 ? 'grid-cols-4' : 'grid-cols-5';
+
+    return (
+      <div key={`gallery-${idx}`} className="group/gallery relative my-4 p-4 pl-12 pr-12 rounded-xl border border-zinc-800 bg-zinc-950/20 shadow-inner">
+        {/* Hover column change control panel at left */}
+        <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5 opacity-0 group-hover/gallery:opacity-100 transition-opacity duration-200 z-30 bg-zinc-950/80 border border-zinc-800 p-1 rounded-lg shadow-md">
+          <button
+            onClick={() => { if (columns < 5) handleUpdateColumns(columns + 1, contentItems); }}
+            className="w-5 h-5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-violet-500 hover:bg-violet-950/35 flex items-center justify-center cursor-pointer select-none font-bold text-xs"
+            title="增加组图分栏数 (+)"
+          >
+            +
+          </button>
+          <span className="text-[9px] text-zinc-500 font-mono select-none font-semibold leading-none">{columns}列</span>
+          <button
+            onClick={() => { if (columns > 1) handleUpdateColumns(columns - 1, contentItems); }}
+            className="w-5 h-5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-violet-500 hover:bg-violet-950/35 flex items-center justify-center cursor-pointer select-none font-bold text-xs"
+            title="减少组图合并列数 (-)"
+          >
+            -
+          </button>
+        </div>
+
+        {/* Hover append picture control panel at right */}
+        <div className="absolute right-2.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/gallery:opacity-100 transition-opacity duration-200 z-30 bg-zinc-950/80 border border-zinc-800 p-1 rounded-lg shadow-md">
+          <button
+            onClick={() => setAddingToBlockItems(contentItems)}
+            className="w-6 h-6 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-violet-400 hover:bg-violet-950/35 flex items-center justify-center cursor-pointer select-none font-bold text-sm"
+            title="追加并排图片 (+)"
+          >
+            +
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between mb-3 border-b border-zinc-850/60 pb-2 select-none">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-violet-400 bg-violet-400/10 px-1.5 py-0.5 rounded">
+              分栏组图 (DualLink Gallery)
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono">列数: {columns} | 单元数: {resolvedImages.length}</span>
+          </div>
+        </div>
+        <div className={`grid gap-3 ${gridColsClass}`}>
+          {resolvedImages.map((img, imgIdx) => {
+            const ext = img.path.split('.').pop()?.toLowerCase() || '';
+            const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext);
+            const isVideo = ['mp4', 'webm', 'mov', 'mkv'].includes(ext);
+            const mediaSrc = img.previewUrl || '';
+
+            return (
+              <div 
+                key={`img-${imgIdx}`} 
+                className="group relative rounded-lg overflow-hidden border border-zinc-800 bg-[#1e1e24]/45 flex flex-col justify-between transition-all hover:scale-[1.01] hover:border-[#383842] hover:shadow-lg min-h-[140px]"
+              >
+                {/* Hover Actions Bar */}
+                <div className="absolute top-2 left-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-950/90 p-1 rounded-md border border-zinc-800 flex gap-1 shadow-md">
+                  <button 
+                    onClick={() => setReplacingLineIndex(img.lineIndex)}
+                    className="w-6 h-6 rounded bg-zinc-900 border border-zinc-800 hover:border-violet-500 hover:text-violet-450 text-zinc-350 hover:text-violet-400 font-semibold text-xs flex items-center justify-center cursor-pointer select-none"
+                    title="替换此图片 (✎)"
+                  >
+                    ✎
+                  </button>
+                  <button 
+                    onClick={() => handleRemoveGalleryImage(img.lineIndex)}
+                    className="w-6 h-6 rounded bg-zinc-900 border border-zinc-800 hover:border-red-500 hover:text-red-400 text-zinc-350 hover:text-red-400 font-semibold text-xs flex items-center justify-center cursor-pointer select-none"
+                    title="移除此图片 (✕)"
+                  >
+                    ✕
+                  </button>
+                </div>
+                
+                {/* Image / Video / Audio rendering */}
+                <div className="flex-1 flex items-center justify-center bg-zinc-950/30 p-1.5 min-h-[100px]">
+                  {mediaSrc ? (
+                    isVideo ? (
+                      <video src={mediaSrc} controls className="max-w-full rounded max-h-[160px]" />
+                    ) : isAudio ? (
+                      <audio src={mediaSrc} controls className="w-full" />
+                    ) : (
+                      <img src={mediaSrc} alt={img.path} className="max-w-full max-h-[160px] object-contain rounded" />
+                    )
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-3 text-center text-zinc-500 select-none">
+                      <span className="text-xl mb-1">🖼</span>
+                      <span className="text-[10px] font-mono select-text leading-tight font-medium break-all truncate max-w-[120px]">{img.path}</span>
+                      <span className="text-[9px] text-zinc-650 mt-1 block">本地未挂载</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Label Footer */}
+                <div className="bg-[#1e1e24]/90 border-t border-zinc-850 px-2 py-1 text-[9px] font-mono text-zinc-400 truncate select-text">
+                   {img.path.split(/[/\\]/).pop()}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // Quick insertion helpers
   const insertLink = (file: LocalFile) => {
     if (!textareaRef.current) return;
@@ -130,28 +373,38 @@ export default function MarkdownEditor({
   const parseMarkdownToReact = (markdown: string): React.ReactNode[] => {
     const lines = markdown.split('\n');
     let insideCodeBlock = false;
-    let codeBlockContent: string[] = [];
+    let codeBlockType = '';
+    let codeBlockContent: { text: string; lineIndex: number }[] = [];
 
     return lines.map((line, idx) => {
       // 1. Code Block Handler
       if (line.trim().startsWith('```')) {
         if (insideCodeBlock) {
           insideCodeBlock = false;
-          const content = codeBlockContent.join('\n');
+          const contentItems = [...codeBlockContent];
+          const finalType = codeBlockType;
           codeBlockContent = [];
+          codeBlockType = '';
+
+          if (finalType === 'duallink-gallery') {
+              return renderGalleryBlock(contentItems, idx);
+          }
+
+          const rawCodeString = contentItems.map(item => item.text).join('\n');
           return (
             <pre key={`code-${idx}`} className="bg-zinc-950 border border-zinc-850 p-3 rounded-lg overflow-x-auto text-[11px] font-mono text-zinc-300 my-2 shadow-inner select-text">
-              <code>{content}</code>
+              <code>{rawCodeString}</code>
             </pre>
           );
         } else {
           insideCodeBlock = true;
+          codeBlockType = line.trim().slice(3).trim();
           return null;
         }
       }
 
       if (insideCodeBlock) {
-        codeBlockContent.push(line);
+        codeBlockContent.push({ text: line, lineIndex: idx });
         return null;
       }
 
@@ -511,9 +764,9 @@ export default function MarkdownEditor({
           <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#18181c] p-6 text-zinc-300 selection:bg-violet-950 selection:text-white">
             
             {/* Simulation Header */}
-            <div className="mb-4 bg-violet-950/20 border border-violet-900/30 p-3 rounded-lg flex items-center justify-between text-xs text-violet-300">
+            <div className="mb-4 bg-violet-950/20 border border-violet-900/30 p-3 rounded-lg flex items-center justify-between text-xs text-violet-300 animate-fadeIn">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-violet-400" />
+                <Sparkles className="w-4 h-4 text-violet-400 animate-pulse" />
                 <span>
                   <strong>沙箱安全视图说明:</strong> 本地协议链接已被渲染。鼠标<strong>悬停</strong>在下方紫色链接片刻即可预览文件属性；<strong>点击</strong>可聚焦至属性面板。
                 </span>
@@ -532,6 +785,70 @@ export default function MarkdownEditor({
         )}
 
       </div>
+
+      {/* Absolute overlay replacing modal when replacingLineIndex or addingToBlockItems is not null */}
+      {(replacingLineIndex !== null || addingToBlockItems !== null) && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-[#1a1a20] border border-zinc-800 w-full max-w-md rounded-xl p-5 shadow-2xl flex flex-col max-h-[80vh] animate-in zoom-in-95 duration-150">
+            <h3 className="text-sm font-semibold text-white mb-2 flex items-center justify-between select-none">
+              <span>{replacingLineIndex !== null ? '选择媒体资产进行替换' : '选择挂载资源追加到组图'}</span>
+              <button 
+                onClick={() => { setReplacingLineIndex(null); setAddingToBlockItems(null); }}
+                className="text-zinc-500 hover:text-zinc-350 font-bold select-none cursor-pointer p-1"
+              >
+                ✕
+              </button>
+            </h3>
+            <p className="text-xs text-zinc-400 mb-4 select-none">
+              {replacingLineIndex !== null ? '请选择已挂载的文件作为该单元在新组图中的图像映射路径：' : '请选择已挂载的文件，该文件将作为新单元追加到当前的分栏组图块中：'}
+            </p>
+            
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[180px]" id="replace-file-picker">
+              {localFiles.map(file => {
+                const ext = file.systemPath.split('.').pop()?.toLowerCase() || '';
+                
+                return (
+                  <button
+                    key={file.id}
+                    onClick={() => {
+                        if (replacingLineIndex !== null) {
+                            handleReplaceGalleryImage(replacingLineIndex, file);
+                        } else if (addingToBlockItems !== null) {
+                            handleAppendImage(addingToBlockItems, file);
+                        }
+                    }}
+                    className="w-full text-left bg-[#101014] hover:bg-violet-955/20 hover:border-violet-600 border border-zinc-850 p-2.5 rounded-lg flex items-center justify-between transition group cursor-pointer"
+                  >
+                    <div className="overflow-hidden pr-2">
+                      <div className="text-xs font-semibold text-zinc-250 truncate group-hover:text-white">{file.name}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono truncate">{file.systemPath}</div>
+                    </div>
+                    <span className="text-[9px] uppercase font-bold tracking-wider text-zinc-500 group-hover:text-violet-400 shrink-0 font-mono pb-0.5 px-2 py-0.5 rounded border border-zinc-850 bg-zinc-950">
+                      {ext || 'file'}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {localFiles.length === 0 && (
+                <div className="text-center py-8 text-zinc-650 text-xs italic select-none">
+                  您暂未挂载系统文件。请首先在左面板拖入或挂载本地文件资产。
+                </div>
+              )}
+            </div>
+            
+            <div className="pt-4 border-t border-zinc-850/60 flex justify-end">
+              <button 
+                onClick={() => { setReplacingLineIndex(null); setAddingToBlockItems(null); }}
+                className="bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 rounded-md px-4 py-1.5 text-xs transition cursor-pointer font-medium select-none"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

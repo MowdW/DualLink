@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "clean": "powershell -Command \"Remove-Item -Recurse -Force dist, main.js -ErrorAction SilentlyContinue\"",
+    "clean": "rm -rf dist main.js",
     "type-check": "tsc --noEmit",
     "build:web": "vite build",
     "build:plugin": "node esbuild.config.mjs production",
-    "build": "npm run clean && npm run type-check && npm run build:web && npm run build:plugin",
+    "build:styles": "node -e \"const fs = require('fs'); fs.copyFileSync('styles.css', 'dist/styles.css'); fs.copyFileSync('manifest.json', 'dist/manifest.json'); if (fs.existsSync('main.js')) { fs.copyFileSync('main.js', 'dist/main.js'); fs.copyFileSync('main.js', 'public/main.js'); } fs.copyFileSync('manifest.json', 'public/manifest.json'); fs.copyFileSync('styles.css', 'public/styles.css');\"",
+    "build": "npm run clean && npm run type-check && npm run build:web && npm run build:plugin && npm run build:styles",
     "preview": "vite preview --port=3000 --host=0.0.0.0",
     "lint": "tsc --noEmit"
   },

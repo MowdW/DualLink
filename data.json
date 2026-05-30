@@ -1,7 +1,11 @@
 {
-  "defaultLinkStyle": "custom-protocol",
-  "hoverPreviewEnabled": true,
+  "defaultLinkStyle": "file-uri",
   "inlineRenderEnabled": true,
   "autoExtractMetadata": true,
-  "customPreviewFolders": ""
+  "customPreviewFolders": "",
+  "defaultFolderPath": "E:\\BaiduSyncdisk\\图片库",
+  "internalFolderPath": "E:\\Obsidian\\插件开发\\附件",
+  "externalMediaFolder": "E:\\BaiduSyncdisk\\图片库",
+  "packOutMode": "move",
+  "hoverPreviewEnabled": true
 }

@@ -25,6 +25,17 @@ export const INITIAL_NOTES: Note[] = [
 * [x] 与运维保障组确认微服务跨节点网络调优策略。
 * [ ] 校验多容器故障自愈机制的实际部署形态。
 * [ ] 点击查阅并完成本地供应商电子服务协议的面签：[📄 商务供应商入驻协议草案.pdf](local-file:///Users/alex/Documents/legal/vendor_agreement_draft.pdf)。
+
+### 🖼️ 项目资产分栏组图 (Gallery) 演示
+以下是我们在本地环境中通过 **本地目录映射插件** 实现的双链分栏组图。你可以将鼠标悬浮在任何照片上方：
+- 点击**编辑 (✎)** 按钮，可随时选取已挂载的其他磁盘文件替换当前单元；
+- 点击**移除 (✕)** 按钮，可直接拔除该图。所有操作均会精细联动底层 Markdown 纯文本代码。
+
+\`\`\`duallink-gallery
+{ "columns": 2 }
+![🖼 高可用云架构拓扑图.png](<file:///Users/alex/Projects/atlas/architecture_diagram.png>)
+![🖼 高可用云架构拓扑图.png](<file:///Users/alex/Projects/atlas/architecture_diagram.png>)
+\`\`\`
 `,
     createdAt: '2026-05-20T09:00:00Z',
     updatedAt: '2026-05-22T10:15:00Z'

@@ -16,15 +16,28 @@ export const MAIN_TS = `/**
 
 import { 
   Plugin, 
-  PluginSettingTab, 
   App, 
-  Setting, 
   MarkdownView, 
   Notice,
   Modal,
   Menu,
   setIcon
 } from 'obsidian';
+import * as electron from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
+import { isImageExt, isVideoExt, isAudioExt, isMediaExt } from './constants';
+import { getCleanLocalPath, getConvertPath } from './path-utils';
+import {
+  isSameFile as isSameFileFn,
+  hasOtherReferences as hasOtherReferencesFn,
+  findFileRecursive as findFileRecursiveFn,
+  findExternalFileRec as findExternalFileRecFn,
+  packToVault as doPackToVault,
+  packOut as doPackOut,
+} from './packer';
+import { registerGalleryProcessor } from './gallery-processor';
+import { LocalFileLinkerSettingTab } from './setting-tab';
 
 interface LocalFileLinkerSettings {
   defaultLinkStyle: 'absolute-path' | 'file-uri' | 'custom-protocol';
@@ -33,6 +46,9 @@ interface LocalFileLinkerSettings {
   customPreviewFolders: string;
   defaultFolderPath: string;
   internalFolderPath: string;
+  externalMediaFolder: string;
+  packOutMode: 'move' | 'copy';
+  hoverPreviewEnabled: boolean;
 }
 
 const DEFAULT_SETTINGS: LocalFileLinkerSettings = {
@@ -41,7 +57,10 @@ const DEFAULT_SETTINGS: LocalFileLinkerSettings = {
   autoExtractMetadata: true,
   customPreviewFolders: '',
   defaultFolderPath: '',
-  internalFolderPath: ''
+  internalFolderPath: '',
+  externalMediaFolder: '',
+  packOutMode: 'move',
+  hoverPreviewEnabled: true
 };
 
 export default class LocalFileLinkerPlugin extends Plugin {
@@ -123,6 +142,18 @@ export default class LocalFileLinkerPlugin extends Plugin {
       }
     });
 
+    this.addCommand({
+      id: 'duallink-pack-to-vault',
+      name: 'DualIn: 打包外部资源到保险库',
+      editorCallback: () => this.packToVault()
+    });
+
+    this.addCommand({
+      id: 'duallink-pack-out',
+      name: 'DualOut: 外置内部媒体到外部目录',
+      editorCallback: () => this.packOut()
+    });
+
     // 4.5 注册右键菜单 (Editor Context Menu)
     this.registerEvent(
       this.app.workspace.on('editor-menu', (menu, editor, view) => {
@@ -132,6 +163,22 @@ export default class LocalFileLinkerPlugin extends Plugin {
             .setIcon('link-2')
             .onClick(() => {
               this.promptForLocalFileLink(editor);
+            });
+        });
+        menu.addItem((item) => {
+          item
+            .setTitle('DualIn: 打包外部资源到保险库')
+            .setIcon('archive')
+            .onClick(() => {
+              this.packToVault();
+            });
+        });
+        menu.addItem((item) => {
+          item
+            .setTitle('DualOut: 外置内部媒体到外部目录')
+            .setIcon('external-link')
+            .onClick(() => {
+              this.packOut();
             });
         });
       })
@@ -146,13 +193,13 @@ export default class LocalFileLinkerPlugin extends Plugin {
       images.forEach((img) => {
         const src = img.getAttribute('src');
         if (src && (src.startsWith('local-file://') || src.startsWith('file:///'))) {
-          const filePath = this.getCleanLocalPath(src);
+          const filePath = getCleanLocalPath(src);
           if (!filePath) return;
           
-          const convertPath = this.getConvertPath(filePath);
+          const convertPath = getConvertPath(this.app, filePath);
           const ext = filePath.split('.').pop()?.toLowerCase() || '';
 
-          if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
+          if (isVideoExt(ext)) {
             const video = document.createElement('video');
             video.src = convertPath;
             video.controls = false;
@@ -163,7 +210,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
             video.style.marginTop = '8px';
             video.style.marginBottom = '8px';
             img.replaceWith(video);
-          } else if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext)) {
+          } else if (isAudioExt(ext)) {
             const audio = document.createElement('audio');
             audio.src = convertPath;
             audio.controls = true;
@@ -171,7 +218,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
             audio.style.marginTop = '8px';
             audio.style.marginBottom = '8px';
             img.replaceWith(audio);
-          } else if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) {
+          } else if (isImageExt(ext)) {
             img.src = convertPath;
             img.style.maxWidth = '100%';
             img.style.borderRadius = '4px';
@@ -184,20 +231,20 @@ export default class LocalFileLinkerPlugin extends Plugin {
       links.forEach(a => {
         const href = a.getAttribute('href');
         if (href && (href.startsWith('local-file://') || href.startsWith('file:///'))) {
-          const filePath = this.getCleanLocalPath(href);
+          const filePath = getCleanLocalPath(href);
           if (!filePath) return;
-          const convertPath = this.getConvertPath(filePath);
+          const convertPath = getConvertPath(this.app, filePath);
           const ext = filePath.split('.').pop()?.toLowerCase() || '';
           
           // 如果是图片或视频类型的扩展名，且用户开启了内联渲染
-          if (['mp4', 'webm', 'mov', 'mkv', 'mp3', 'wav', 'ogg', 'm4a', 'flac', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) {
+          if (isMediaExt(ext)) {
             // 查看上一个节点是否是属于文本节点且以 '!' 结尾，如果有则移除
             const prevNode = a.previousSibling;
             if (prevNode && prevNode.nodeType === Node.TEXT_NODE && prevNode.textContent?.endsWith('!')) {
               prevNode.textContent = prevNode.textContent.slice(0, -1); 
             }
 
-            if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
+            if (isVideoExt(ext)) {
               const video = document.createElement('video');
               video.src = convertPath;
               video.controls = false;
@@ -206,13 +253,13 @@ export default class LocalFileLinkerPlugin extends Plugin {
               video.style.maxWidth = '100%';
               video.style.borderRadius = '8px';
               a.replaceWith(video);
-            } else if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext)) {
+            } else if (isAudioExt(ext)) {
               const audio = document.createElement('audio');
               audio.src = convertPath;
               audio.controls = true;
               audio.style.width = '100%';
               a.replaceWith(audio);
-            } else if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) {
+            } else if (isImageExt(ext)) {
               const img = document.createElement('img');
               img.src = convertPath;
               img.style.maxWidth = '100%';
@@ -225,663 +272,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
     });
 
     // 5.5 注册分栏组图 (Gallery) 的 代码块 处理器
-    this.registerMarkdownCodeBlockProcessor('duallink-gallery', (source, el, ctx) => {
-      const lines = source.split('\\n');
-      let columns = 3;
-      const images: string[] = [];
-      let isConfig = true;
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (isConfig && trimmed.startsWith('{')) {
-          try {
-            const config = JSON.parse(trimmed);
-            if (config.columns) columns = config.columns;
-          } catch (e) { }
-          isConfig = false;
-        } else {
-          isConfig = false;
-          images.push(trimmed);
-        }
-      }
-
-      el.addClass('duallink-gallery-container');
-      el.style.position = 'relative';
-
-      const updateCodeBlock = async (newColumns: number, newImages: string[]) => {
-          const info = ctx.getSectionInfo(el);
-          if (!info) {
-              const { Notice } = require('obsidian');
-              new Notice('无法获取区块在文档中的行号，请确保文档已被正确解析。');
-              return;
-          }
-          const { MarkdownView } = require('obsidian');
-          const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-          
-          const newContent = \`\\\`\\\`\\\`duallink-gallery\\n{ "columns": \${newColumns} }\\n\${newImages.join('\\n')}\\n\\\`\\\`\\\`\`;
-          
-          if (view && (view as any).editor && typeof (view as any).editor.replaceRange === 'function' && (view as any).getMode() !== 'preview') {
-              const editor = (view as any).editor;
-              editor.replaceRange(
-                  newContent,
-                  { line: info.lineStart, ch: 0 },
-                  { line: info.lineEnd, ch: editor.getLine(info.lineEnd).length }
-              );
-          } else {
-              const file = this.app.workspace.getActiveFile();
-              if (file) {
-                  await this.app.vault.process(file, (data) => {
-                      const lines = data.split('\\n');
-                      lines.splice(info.lineStart, info.lineEnd - info.lineStart + 1, newContent);
-                      return lines.join('\\n');
-                  });
-              }
-          }
-      };
-
-      // 启动后台校验和自动修正工作
-      setTimeout(async () => {
-          let hasFixes = false;
-          const newImages = [...images];
-          for (let i = 0; i < newImages.length; i++) {
-              const imgSource = newImages[i];
-              const internalMatch = imgSource.match(/!\\[\\[(.*?)\\]\\]/);
-              if (internalMatch) {
-                  const linkText = internalMatch[1].split('|')[0];
-                  const dest = this.app.metadataCache.getFirstLinkpathDest(linkText, ctx.sourcePath);
-                  if (!dest) {
-                      const fileName = linkText.split(/[\\/\\\\]/).pop();
-                      if (fileName) {
-                          const fallbackDest = this.app.metadataCache.getFirstLinkpathDest(fileName, ctx.sourcePath);
-                          if (fallbackDest) {
-                              hasFixes = true;
-                              const newLinkText = fallbackDest.path + (internalMatch[1].includes('|') ? '|' + internalMatch[1].split('|')[1] : '');
-                              newImages[i] = imgSource.replace(internalMatch[1], newLinkText);
-                          }
-                      }
-                  }
-                  continue;
-              }
-              
-              const externalMatch = imgSource.match(/!\\[.*?\\]\\(<file:\\/\\/\\/(.*?)>\\)/) || imgSource.match(/!\\[.*?\\]\\(file:\\/\\/\\/(.*?)\\)/);
-              if (externalMatch) {
-                  const rawPath = decodeURIComponent(externalMatch[1]);
-                  const fs = require('fs');
-                  if (!fs.existsSync(rawPath) && this.settings.defaultFolderPath) {
-                      const fileName = require('path').basename(rawPath);
-                      const newPath = await this.findExternalFileRec(fileName, this.settings.defaultFolderPath, 4, 0);
-                      if (newPath) {
-                          hasFixes = true;
-                          let appendPath = newPath.split(/[\\/\\\\]/).map((c:string) => encodeURIComponent(c)).join('/');
-                          appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
-                          newImages[i] = imgSource.replace(externalMatch[1], appendPath);
-                      }
-                  }
-                  continue;
-              }
-          }
-          if (hasFixes) {
-              updateCodeBlock(columns, newImages);
-          }
-      }, 100);
-
-      const galleryWrapper = el.createEl('div');
-      galleryWrapper.style.position = 'relative';
-
-      const grid = galleryWrapper.createEl('div');
-      grid.style.display = 'flex';
-      grid.style.gap = '12px';
-      grid.style.alignItems = 'flex-start';
-
-      const colEls: HTMLElement[] = [];
-      for (let i = 0; i < columns; i++) {
-          const col = grid.createDiv();
-          col.style.display = 'flex';
-          col.style.flexDirection = 'column';
-          col.style.gap = '12px';
-          col.style.flex = '1';
-          col.style.minWidth = '0';
-          colEls.push(col);
-      }
-      
-      const colControls = galleryWrapper.createDiv({ cls: 'duallink-gallery-control' });
-      colControls.style.position = 'absolute';
-      colControls.style.top = '50%';
-      colControls.style.left = '4px';
-      colControls.style.transform = 'translateY(-50%)';
-      colControls.style.display = 'flex';
-      colControls.style.flexDirection = 'column';
-      colControls.style.alignItems = 'center';
-      colControls.style.justifyContent = 'center';
-      colControls.style.background = 'transparent';
-      colControls.style.zIndex = '10';
-      colControls.style.opacity = '0';
-      colControls.style.transition = 'opacity 0.2s';
-      colControls.style.width = '32px';
-
-      const createColBtn = (text: string, title: string, onClick: () => void) => {
-          const btn = colControls.createEl('button', { text, title });
-          btn.style.background = 'transparent';
-          btn.style.border = 'none';
-          btn.style.boxShadow = 'none';
-          btn.style.cursor = 'pointer';
-          btn.style.color = 'var(--text-muted)';
-          btn.style.fontSize = '24px';
-          btn.style.padding = '0';
-          btn.style.lineHeight = '1';
-          btn.style.transition = 'transform 0.2s, color 0.2s';
-          btn.addEventListener('mouseenter', () => { btn.style.transform = 'scale(1.2)'; btn.style.color = 'var(--text-normal)'; });
-          btn.addEventListener('mouseleave', () => { btn.style.transform = 'scale(1)'; btn.style.color = 'var(--text-muted)'; });
-          btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
-      };
-
-      createColBtn('-', '减少列数', () => { if (columns > 1) updateCodeBlock(columns - 1, images); });
-      createColBtn('+', '增加列数', () => { if (columns < 8) updateCodeBlock(columns + 1, images); });
-
-      const addControls = galleryWrapper.createDiv({ cls: 'duallink-gallery-control' });
-      addControls.style.position = 'absolute';
-      addControls.style.top = '50%';
-      addControls.style.right = '4px';
-      addControls.style.transform = 'translateY(-50%)';
-      addControls.style.display = 'flex';
-      addControls.style.alignItems = 'center';
-      addControls.style.justifyContent = 'center';
-      addControls.style.background = 'transparent';
-      addControls.style.zIndex = '10';
-      addControls.style.opacity = '0';
-      addControls.style.transition = 'opacity 0.2s';
-      addControls.style.width = '32px';
-
-      const addBtn = addControls.createEl('button', { title: '添加新图片' });
-      addBtn.style.background = 'transparent';
-      addBtn.style.border = 'none';
-      addBtn.style.boxShadow = 'none';
-      addBtn.style.cursor = 'pointer';
-      addBtn.style.color = 'var(--text-muted)';
-      addBtn.style.padding = '0';
-      addBtn.style.display = 'flex';
-      addBtn.style.alignItems = 'center';
-      addBtn.style.justifyContent = 'center';
-      addBtn.style.transition = 'transform 0.2s, color 0.2s';
-      addBtn.innerHTML = \`<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>\`;
-
-      addBtn.addEventListener('mouseenter', () => { addBtn.style.transform = 'scale(1.2)'; addBtn.style.color = 'var(--text-normal)'; });
-      addBtn.addEventListener('mouseleave', () => { addBtn.style.transform = 'scale(1)'; addBtn.style.color = 'var(--text-muted)'; });
-
-      addBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (el.closest('.markdown-reading-view')) return;
-          
-          const tempBox = grid.createEl('div');
-          tempBox.style.borderRadius = '8px';
-          tempBox.style.border = '2px dashed var(--interactive-accent)';
-          tempBox.style.display = 'flex';
-          tempBox.style.alignItems = 'center';
-          tempBox.style.justifyContent = 'center';
-          tempBox.style.minHeight = '100px';
-          tempBox.style.color = 'var(--interactive-accent)';
-          tempBox.style.fontSize = '12px';
-          tempBox.createEl('span', { text: '正在选择文件...' });
-
-          const { Notice, MarkdownView } = require('obsidian');
-          const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-          if (!view) { 
-              tempBox.remove(); 
-              return; 
-          }
-          
-          new PathPromptModal(this, '', (inputPath: string) => {
-               if(!inputPath) { 
-                   tempBox.remove(); 
-                   return; 
-               }
-               const adapter = this.app.vault.adapter;
-               const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
-               let newSyntax = '';
-               
-               const cleanP = inputPath.replace(/['"]/g, '').trim();
-               let isInternal = false;
-               let internalPath = '';
-               if (vaultBasePath && cleanP.startsWith(vaultBasePath)) {
-                   isInternal = true;
-                   internalPath = cleanP.substring(vaultBasePath.length).replace(/^[/\\\\]+/, '').replace(/\\\\/g, '/');
-               }
-               if (isInternal) {
-                   newSyntax = \`![[\${internalPath}]]\`;
-               } else {
-                   let appendPath = cleanP.startsWith('/') ? cleanP.substring(1) : cleanP;
-                   appendPath = appendPath.split('/').map(c => encodeURIComponent(c)).join('/');
-                   appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
-                   newSyntax = \`![](<file:///\${appendPath}>)\`;
-               }
-               updateCodeBlock(columns, [...images, newSyntax]);
-          }).open();
-      });
-
-      galleryWrapper.addEventListener('mouseenter', () => {
-           if (!el.closest('.markdown-reading-view')) {
-               colControls.style.opacity = '1';
-               addControls.style.opacity = '1';
-           }
-      });
-      galleryWrapper.addEventListener('mouseleave', () => {
-           colControls.style.opacity = '0';
-           addControls.style.opacity = '0';
-      });
-
-      galleryWrapper.style.padding = '0 36px';
-
-      const items: HTMLElement[] = [];
-      let lastLayout = '';
-      
-      const distributeItems = () => {
-          const colHeights = new Array(columns).fill(0);
-          const targetCols = new Array(items.length);
-          
-          items.forEach((item, idx) => {
-              let shortestIdx = 0;
-              let minHeight = colHeights[0];
-              for (let i = 1; i < columns; i++) {
-                  if (colHeights[i] < minHeight) {
-                      minHeight = colHeights[i];
-                      shortestIdx = i;
-                  }
-              }
-              targetCols[idx] = shortestIdx;
-              const h = item.getBoundingClientRect().height;
-              colHeights[shortestIdx] += (h > 0 ? h : 100) + 12;
-          });
-
-          const newLayout = targetCols.join(',');
-          if (lastLayout !== newLayout) {
-              lastLayout = newLayout;
-              targetCols.forEach((colIdx, itemIdx) => {
-                  colEls[colIdx].appendChild(items[itemIdx]);
-              });
-          }
-      };
-
-      const resizeObserver = new ResizeObserver(() => {
-          window.requestAnimationFrame(() => {
-              distributeItems();
-          });
-      });
-
-      images.forEach((imgSource, index) => {
-        const item = document.createElement('div');
-        items.push(item);
-        resizeObserver.observe(item);
-        
-        item.style.position = 'relative';
-        item.style.borderRadius = '8px';
-        item.style.overflow = 'hidden';
-        item.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
-        item.style.border = '1px solid var(--background-modifier-border)';
-        item.style.backgroundColor = 'var(--background-secondary)';
-        item.style.display = 'flex';
-        item.style.flexDirection = 'column';
-        item.style.cursor = 'grab';
-
-        item.style.transition = 'transform 0.2s, opacity 0.2s';
-
-        // 拖拽排序
-        item.draggable = true;
-        item.addEventListener('dragstart', (e) => {
-            e.stopPropagation();
-            if (e.dataTransfer) {
-                e.dataTransfer.setData('duallink-gallery-index', index.toString());
-                e.dataTransfer.effectAllowed = 'move';
-            }
-            setTimeout(() => {
-                item.style.opacity = '0.4';
-            }, 0);
-        });
-        item.addEventListener('dragend', (e) => {
-            item.style.opacity = '1';
-            item.style.border = '1px solid var(--background-modifier-border)';
-        });
-        item.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            if (e.dataTransfer) {
-                e.dataTransfer.dropEffect = 'move';
-            }
-            item.style.border = '2px dashed var(--interactive-accent)';
-        });
-        item.addEventListener('dragleave', (e) => {
-            item.style.border = '1px solid var(--background-modifier-border)';
-        });
-        item.addEventListener('drop', (e) => {
-            e.preventDefault();
-            item.style.border = '1px solid var(--background-modifier-border)';
-            if (!e.dataTransfer) return;
-            
-            const originIndexStr = e.dataTransfer.getData('duallink-gallery-index');
-            if (!originIndexStr) return;
-            
-            const originIndex = parseInt(originIndexStr, 10);
-            if (originIndex === index || isNaN(originIndex)) return;
-            
-            const newImages = [...images];
-            const [draggedImg] = newImages.splice(originIndex, 1);
-            newImages.splice(index, 0, draggedImg);
-            
-            updateCodeBlock(columns, newImages);
-        });
-
-        item.addEventListener('mouseenter', () => {
-            if (el.closest('.markdown-reading-view')) return;
-            item.style.transform = 'scale(1.02)';
-        });
-        item.addEventListener('mouseleave', () => {
-            if (el.closest('.markdown-reading-view')) return;
-            item.style.transform = 'none';
-        });
-
-        // 双击放大预览
-        item.addEventListener('dblclick', (e) => {
-            e.stopPropagation();
-            const media = item.querySelector('img, video') as HTMLImageElement | HTMLVideoElement;
-            if (!media) return;
-
-            const overlay = document.body.createEl('div');
-            overlay.style.position = 'fixed';
-            overlay.style.top = '0';
-            overlay.style.left = '0';
-            overlay.style.width = '100vw';
-            overlay.style.height = '100vh';
-            overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.85)';
-            overlay.style.zIndex = '99999';
-            overlay.style.display = 'flex';
-            overlay.style.justifyContent = 'center';
-            overlay.style.alignItems = 'center';
-            overlay.style.cursor = 'zoom-out';
-            // overlay.style.backdropFilter = 'blur(4px)'; // optional, can be slow
-
-            let clone: HTMLElement;
-            if (media.tagName.toLowerCase() === 'img') {
-                clone = document.createElement('img');
-                (clone as HTMLImageElement).src = (media as HTMLImageElement).src;
-            } else {
-                clone = document.createElement('video');
-                (clone as HTMLVideoElement).src = (media as HTMLVideoElement).src;
-                (clone as HTMLVideoElement).controls = true;
-                (clone as HTMLVideoElement).autoplay = true;
-            }
-
-            clone.style.maxWidth = '90vw';
-            clone.style.maxHeight = '90vh';
-            clone.style.objectFit = 'contain';
-            clone.style.boxShadow = '0 10px 40px rgba(0,0,0,0.5)';
-            clone.style.borderRadius = '8px';
-            clone.style.cursor = 'default';
-            
-            // 阻止点击图片时关闭
-            clone.addEventListener('click', (e2) => {
-                e2.stopPropagation();
-            });
-
-            overlay.appendChild(clone);
-
-            // 关闭按钮
-            const closeBtn = overlay.createEl('div', { text: '✕' });
-            closeBtn.style.position = 'absolute';
-            closeBtn.style.top = '20px';
-            closeBtn.style.right = '20px';
-            closeBtn.style.width = '40px';
-            closeBtn.style.height = '40px';
-            closeBtn.style.backgroundColor = 'rgba(0,0,0,0.5)';
-            closeBtn.style.color = 'white';
-            closeBtn.style.borderRadius = '50%';
-            closeBtn.style.display = 'flex';
-            closeBtn.style.justifyContent = 'center';
-            closeBtn.style.alignItems = 'center';
-            closeBtn.style.fontSize = '20px';
-            closeBtn.style.cursor = 'pointer';
-            closeBtn.style.transition = 'background-color 0.2s';
-            
-            closeBtn.addEventListener('mouseenter', () => closeBtn.style.backgroundColor = 'rgba(255,255,255,0.2)');
-            closeBtn.addEventListener('mouseleave', () => closeBtn.style.backgroundColor = 'rgba(0,0,0,0.5)');
-
-            overlay.addEventListener('click', () => {
-                overlay.remove();
-            });
-            
-            // 支持 ESC 关闭
-            const escListener = (e2: KeyboardEvent) => {
-                if (e2.key === 'Escape') {
-                    overlay.remove();
-                    document.removeEventListener('keydown', escListener);
-                }
-            };
-            document.addEventListener('keydown', escListener);
-            
-            overlay.addEventListener('remove', () => {
-                document.removeEventListener('keydown', escListener);
-            });
-        });
-
-        // 修改按钮
-        const editImageBtn = item.createEl('div', { text: '✎' });
-        editImageBtn.style.position = 'absolute';
-        editImageBtn.style.top = '4px';
-        editImageBtn.style.left = '4px';
-        editImageBtn.style.width = '20px';
-        editImageBtn.style.height = '20px';
-        editImageBtn.style.background = 'transparent';
-        editImageBtn.style.color = 'rgba(255, 255, 255, 0.8)';
-        editImageBtn.style.borderRadius = '50%';
-        editImageBtn.style.display = 'flex';
-        editImageBtn.style.justifyContent = 'center';
-        editImageBtn.style.alignItems = 'center';
-        editImageBtn.style.cursor = 'pointer';
-        editImageBtn.style.opacity = '0';
-        editImageBtn.style.transition = 'opacity 0.2s, color 0.2s';
-        editImageBtn.style.zIndex = '5';
-        editImageBtn.style.fontSize = '14px';
-        editImageBtn.style.textShadow = '0 1px 2px rgba(0,0,0,0.8)';
-        editImageBtn.title = '替换此图片';
-        
-        editImageBtn.addEventListener('mouseenter', () => editImageBtn.style.color = 'var(--interactive-accent)');
-        editImageBtn.addEventListener('mouseleave', () => editImageBtn.style.color = 'rgba(255, 255, 255, 0.8)');
-
-        // 删除按钮
-        const removeBtn = item.createEl('div', { text: '✕' });
-        removeBtn.style.position = 'absolute';
-        removeBtn.style.top = '4px';
-        removeBtn.style.left = '28px';
-        removeBtn.style.width = '20px';
-        removeBtn.style.height = '20px';
-        removeBtn.style.background = 'transparent';
-        removeBtn.style.color = 'rgba(255, 255, 255, 0.8)';
-        removeBtn.style.borderRadius = '50%';
-        removeBtn.style.display = 'flex';
-        removeBtn.style.justifyContent = 'center';
-        removeBtn.style.alignItems = 'center';
-        removeBtn.style.cursor = 'pointer';
-        removeBtn.style.opacity = '0';
-        removeBtn.style.transition = 'opacity 0.2s, color 0.2s';
-        removeBtn.style.zIndex = '5';
-        removeBtn.style.fontSize = '14px';
-        removeBtn.style.textShadow = '0 1px 2px rgba(0,0,0,0.8)';
-        removeBtn.title = '移除此图片';
-        
-        removeBtn.addEventListener('mouseenter', () => removeBtn.style.color = 'var(--background-modifier-error)');
-        removeBtn.addEventListener('mouseleave', () => removeBtn.style.color = 'rgba(255, 255, 255, 0.8)');
-        
-        item.addEventListener('mouseenter', () => {
-            if (el.closest('.markdown-reading-view')) return;
-            removeBtn.style.opacity = '1';
-            editImageBtn.style.opacity = '1';
-        });
-        item.addEventListener('mouseleave', () => {
-            removeBtn.style.opacity = '0';
-            editImageBtn.style.opacity = '0';
-        });
-        
-        removeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (el.closest('.markdown-reading-view')) return;
-            const newImages = [...images];
-            newImages.splice(index, 1);
-            updateCodeBlock(columns, newImages);
-        });
-
-        editImageBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (el.closest('.markdown-reading-view')) return;
-            const { Notice, MarkdownView } = require('obsidian');
-            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (!view) return;
-            
-            new PathPromptModal(this, '', (inputPath: string) => {
-                 if(!inputPath) return;
-                 const adapter = this.app.vault.adapter;
-                 const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
-                 let newSyntax = '';
-                 
-                 const cleanP = inputPath.replace(/['"]/g, '').trim();
-                 let isInternal = false;
-                 let internalPath = '';
-                 if (vaultBasePath && cleanP.startsWith(vaultBasePath)) {
-                     isInternal = true;
-                     internalPath = cleanP.substring(vaultBasePath.length).replace(/^[/\\\\]+/, '').replace(/\\\\/g, '/');
-                 }
-                 if (isInternal) {
-                     newSyntax = \`![[\${internalPath}]]\`;
-                 } else {
-                     let appendPath = cleanP.startsWith('/') ? cleanP.substring(1) : cleanP;
-                     appendPath = appendPath.split('/').map(c => encodeURIComponent(c)).join('/');
-                     appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
-                     newSyntax = \`![](<file:///\${appendPath}>)\`;
-                 }
-                 const newImages = [...images];
-                 newImages[index] = newSyntax;
-                 updateCodeBlock(columns, newImages);
-            }).open();
-        });
-
-        const { MarkdownRenderer } = require('obsidian');
-        MarkdownRenderer.renderMarkdown(imgSource, item, ctx.sourcePath, this);
-        
-        setTimeout(() => {
-            const allImgs = Array.from(item.querySelectorAll('img'));
-            // 修复由于 markdown 默认把 file:///...mp4 渲染成 <img> 的问题
-            allImgs.forEach(img => {
-                const src = img.src || img.getAttribute('src');
-                if (src && /\\.(mp4|webm|mov|mkv)\$/i.test(src.split('?')[0])) {
-                    const video = document.createElement('video');
-                    video.src = src;
-                    video.controls = false;
-                    video.addEventListener('mouseenter', () => video.controls = true);
-                    video.addEventListener('mouseleave', () => video.controls = false);
-                    video.setAttribute('controlslist', 'nodownload'); // Optional nice touch
-                    img.parentNode?.replaceChild(video, img);
-                }
-            });
-
-            const medias = item.querySelectorAll('img, video, .internal-embed');
-            medias.forEach(media => {
-                if (media instanceof HTMLElement) {
-                  media.style.width = '100%';
-                  media.style.height = '100%';
-                  media.style.objectFit = 'cover';
-                  media.style.display = 'block';
-                  media.style.borderRadius = '0';
-                  media.style.margin = '0';
-                  if (media.tagName.toLowerCase() === 'img') {
-                      media.style.pointerEvents = 'none';
-                  }
-                  media.setAttribute('draggable', 'false'); // Disable native drag
-                }
-            });
-            const ps = item.querySelectorAll('p');
-            ps.forEach(p => {
-                p.style.margin = '0';
-                p.style.padding = '0';
-            });
-        }, 50);
-      });
-
-      const remainingCols = columns - images.length;
-      if (remainingCols > 0) {
-          for (let i = 0; i < remainingCols; i++) {
-              const emptyCell = document.createElement('div');
-              items.push(emptyCell);
-              resizeObserver.observe(emptyCell);
-              emptyCell.style.borderRadius = '8px';
-              emptyCell.style.border = '2px dashed var(--background-modifier-border)';
-              emptyCell.style.display = 'flex';
-              emptyCell.style.alignItems = 'center';
-              emptyCell.style.justifyContent = 'center';
-              emptyCell.style.cursor = 'pointer';
-              emptyCell.style.minHeight = '100px';
-              emptyCell.style.color = 'var(--text-muted)';
-              emptyCell.style.transition = 'all 0.2s';
-              
-              const updateIcon = () => {
-                  emptyCell.innerHTML = \`<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>\`;
-              };
-              updateIcon();
-              
-              emptyCell.addEventListener('mouseenter', () => {
-                  if (el.closest('.markdown-reading-view')) return;
-                  emptyCell.style.borderColor = 'var(--interactive-accent)';
-                  emptyCell.style.color = 'var(--interactive-accent)';
-                  emptyCell.style.transform = 'scale(1.02)';
-              });
-              emptyCell.addEventListener('mouseleave', () => {
-                  emptyCell.style.borderColor = 'var(--background-modifier-border)';
-                  emptyCell.style.color = 'var(--text-muted)';
-                  emptyCell.style.transform = 'scale(1)';
-              });
-              emptyCell.addEventListener('click', (e) => {
-                  e.stopPropagation();
-                  if (el.closest('.markdown-reading-view')) return;
-                  
-                  emptyCell.innerHTML = '';
-                  const loadingSpan = emptyCell.createEl('span', { text: '正在选择文件...' });
-                  loadingSpan.style.fontSize = '12px';
-                  loadingSpan.style.color = 'var(--interactive-accent)';
-                  
-                  const { Notice, MarkdownView } = require('obsidian');
-                  const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-                  if (!view) { 
-                      updateIcon();
-                      return; 
-                  }
-                  
-                  new PathPromptModal(this, '', (inputPath: string) => {
-                       if(!inputPath) { 
-                           updateIcon();
-                           return; 
-                       }
-                       const adapter = this.app.vault.adapter;
-                       const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
-                       let newSyntax = '';
-                       
-                       const cleanP = inputPath.replace(/['"]/g, '').trim();
-                       let isInternal = false;
-                       let internalPath = '';
-                       if (vaultBasePath && cleanP.startsWith(vaultBasePath)) {
-                           isInternal = true;
-                           internalPath = cleanP.substring(vaultBasePath.length).replace(/^[/\\\\]+/, '').replace(/\\\\/g, '/');
-                       }
-                       if (isInternal) {
-                           newSyntax = \`![[\${internalPath}]]\`;
-                       } else {
-                           let appendPath = cleanP.startsWith('/') ? cleanP.substring(1) : cleanP;
-                           appendPath = appendPath.split('/').map(c => encodeURIComponent(c)).join('/');
-                           appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
-                           newSyntax = \`![](<file:///\${appendPath}>)\`;
-                       }
-                       updateCodeBlock(columns, [...images, newSyntax]);
-                  }).open();
-              });
-          }
-      }
-
-    });
+    registerGalleryProcessor(this, PathPromptModal);
 
     // 6. 注册设置管理面板
     this.addSettingTab(new LocalFileLinkerSettingTab(this.app, this));
@@ -903,70 +294,8 @@ export default class LocalFileLinkerPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  public getCleanLocalPath(href: string): string {
-    let filePath = '';
-    // Use match to extract the raw path, being mindful of angular brackets or quotes.
-    const cleanHref = href.replace(/^[<"']|[>"']\$/g, '').trim();
-    const matchLocal = cleanHref.match(/local-file:\\/\\/(.+)/);
-    const matchFile = cleanHref.match(/file:\\/\\/\\/(.+)/);
-    
-    if (matchLocal) {
-      filePath = decodeURIComponent(matchLocal[1]);
-    } else if (matchFile) {
-      filePath = decodeURIComponent(matchFile[1]);
-    } else {
-      filePath = decodeURIComponent(cleanHref.replace('local-file://', '').replace('file:///', ''));
-    }
-    
-    // Removes any trailing parenthesis from code mirrors, and unnecessary quotes
-    return filePath.replace(/\\)\$/, '').replace(/['">]/g, '').trim(); 
-  }
-
-  public getConvertPath(filePath: string): string {
-    const cleanPath = filePath.replace(/['">]/g, '').trim().replace(/\\\\/g, '/');
-    let hashPrefix = 'app://local/';
-    
-    // dynamically get the vault app root URL to fix broken paths in modern Obsidian
-    if (this.app.vault.adapter && (this.app.vault.adapter as any).getResourcePath) {
-      try {
-        const vaultRootUrl = (this.app.vault.adapter as any).getResourcePath("").split("?")[0];
-        const match = vaultRootUrl.match(/^app:\\/\\/[^\\/]+\\//);
-        if (match) {
-            hashPrefix = match[0];
-        }
-      } catch (e) {
-        console.warn("Failed to extract vault app prefix:", e);
-      }
-    }
-    
-    let appendPath = cleanPath.startsWith('/') ? cleanPath.substring(1) : cleanPath;
-    
-    // Encode the path to ensure Chinese characters and spaces are safely loaded inside Obsidian
-    appendPath = appendPath.split('/').map(c => encodeURIComponent(c)).join('/');
-    // For Windows drives (e.g., C:), ensure colon is preserved
-    appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '\$1:');
-
-    return \`\${hashPrefix}\${appendPath}\`;
-  }
-
   public async findExternalFileRec(fileName: string, dir: string, maxDepth = 4, currentDepth = 0): Promise<string | null> {
-    if (currentDepth > maxDepth || !dir) return null;
-    const fs = require('fs');
-    const path = require('path');
-    try {
-        const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-        for (const entry of entries) {
-            if (entry.isDirectory()) {
-                const found = await this.findExternalFileRec(fileName, path.join(dir, entry.name), maxDepth, currentDepth + 1);
-                if (found) return found;
-            } else if (entry.name === fileName) {
-                return path.join(dir, entry.name);
-            }
-        }
-    } catch (e) {
-        // ignore errors like permission denied
-    }
-    return null;
+    return findExternalFileRecFn(fileName, dir, maxDepth, currentDepth);
   }
 
   /**
@@ -978,23 +307,17 @@ export default class LocalFileLinkerPlugin extends Plugin {
     const cleanName = fileName.replace(/['"]/g, '').trim();
 
     const ext = cleanName.split('.').pop()?.toLowerCase() || '';
-    const isMedia = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'mp4', 'webm', 'mov', 'mkv', 'mp3', 'wav', 'ogg'].includes(ext);
+    const media = isMediaExt(ext);
 
-    // 对于富媒体文件且启用了内联渲染，强制生成对 Live Preview (实时预览) 更加友好的语法。
-    if (isMedia && this.settings.inlineRenderEnabled) {
+    if (media && this.settings.inlineRenderEnabled) {
       const urlWithoutLeadingSlash = cleanPath.startsWith('/') ? cleanPath.substring(1) : cleanPath;
       const finalSrc = \`file:///\${urlWithoutLeadingSlash}\`;
       
-      // 直接输出 HTML video/audio 标签，从而能够在 Live Preview 中实现实时无缝交互式预览，
-      // 注意：这里我们使用 file:/// 协议，因为使用基于 UUID 的 app:// 协议在重启后会失效。
-      // Obsidian 的 Live Preview 有时并不完全支持 file:/// 视频，但对于图片支持极佳。如果用户需要完美支持，
-      // 我们推荐使用标准 Markdown 语法，但这将留给用户和由于 Electron 决定的原生行为。
-      if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
+      if (isVideoExt(ext)) {
         return \`<video src="\${finalSrc}" controls style="max-width: 100%; border-radius: 8px;"></video>\`;
-      } else if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext)) {
+      } else if (isAudioExt(ext)) {
         return \`<audio src="\${finalSrc}" controls style="width: 100%; border-radius: 8px;"></audio>\`;
       } else {
-        // 图片由于受 Live Preview 原生 ![] 支持最好，强制使用 file:/// 协议以支持跨端预览
         return \`![🖼 \${cleanName}](<\${finalSrc}>)\`;
       }
     }
@@ -1010,6 +333,26 @@ export default class LocalFileLinkerPlugin extends Plugin {
         // 推荐采用 custom-protocol 格式，它不易与原生 web url 行为产生干涉，防断裂的尖括号包含格式。
         return \`[📄 \${cleanName}](<local-file://\${cleanPath}>)\`;
     }
+  }
+
+  isSameFile(path1: string, path2: string): boolean {
+    return isSameFileFn(path1, path2);
+  }
+
+  hasOtherReferences(file: any, currentPath: string): boolean {
+    return hasOtherReferencesFn(this.app, file, currentPath);
+  }
+
+  findFileRecursive(dir: string, targetName: string): string | null {
+    return findFileRecursiveFn(dir, targetName);
+  }
+
+  async packToVault() {
+    await doPackToVault(this);
+  }
+
+  async packOut() {
+    await doPackOut(this);
   }
 
   /**
@@ -1029,6 +372,10 @@ export default class LocalFileLinkerPlugin extends Plugin {
     this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
       const target = evt.target as HTMLElement;
       if (!target) return;
+
+      if (target.tagName !== 'A' && !target.classList.contains('cm-url') && !target.classList.contains('cm-link') && !target.classList.contains('cm-underline')) {
+        return;
+      }
 
       let href = null;
       if (target.tagName === 'A' && target.classList.contains('external-link')) {
@@ -1060,7 +407,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
       }
 
       if (href && (href.startsWith('local-file://') || href.includes('local-file://') || href.includes('file:///'))) {
-        const filePath = this.getCleanLocalPath(href);
+        const filePath = getCleanLocalPath(href);
         if (!filePath) return;
 
         evt.preventDefault();
@@ -1082,8 +429,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
             .setIcon('folder')
             .onClick(() => {
               try {
-                const { shell } = require('electron');
-                shell.showItemInFolder(filePath);
+                electron.shell.showItemInFolder(filePath);
                 new Notice('正在文件系统的所在文件夹中高亮显示该文件...');
               } catch (e) {
                 console.error("Shell error", e);
@@ -1113,9 +459,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
     const fileName = filePath.split('/').pop() || '外部文件';
     new Notice(\`📂 正在调取系统原生应用打开文件: \${fileName}\`);
     try {
-      // 在 Obsidian (基于 Electron) 运行时中，可以直接加载 electron 核心功能
-      const { shell } = require('electron');
-      shell.openPath(filePath).then((err: string) => {
+      electron.shell.openPath(filePath).then((err: string) => {
         if (err) {
           new Notice(\`⚠️ 无法唤醒程序: \${err}\`, 5000);
         }
@@ -1195,8 +539,9 @@ export default class LocalFileLinkerPlugin extends Plugin {
       }
 
       if (isInternal) {
-          const isMedia = /\\.(png|jpg|jpeg|gif|svg|webp|mp4|webm|mov|mkv|mp3|wav|ogg|m4a|flac)\$/i.test(internalPath);
-          mdLink = isMedia ? \`![[\${internalPath}]]\` : \`[[\${internalPath}|\${finalName}]]\`;
+          const ext = internalPath.split('.').pop()?.toLowerCase() || '';
+          const media = isMediaExt(ext);
+          mdLink = media ? \`![[\${internalPath}]]\` : \`[[\${internalPath}|\${finalName}]]\`;
       } else {
           mdLink = this.generateMarkdownLink(finalName, cleanInputPath);
       }
@@ -1212,7 +557,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
   }
 }
 
-class PathPromptModal extends Modal {
+export class PathPromptModal extends Modal {
   private onSubmit: (path: string, name: string) => void;
   private inputPath: string = '';
   private customName: string = '';
@@ -1240,7 +585,7 @@ class PathPromptModal extends Modal {
     this.lastExternalPath = this.currentFolderPath;
   }
 
-  onOpen() {
+  async onOpen() {
     const { contentEl } = this;
     contentEl.empty();
     
@@ -1278,9 +623,9 @@ class PathPromptModal extends Modal {
     this.pathInputEl.style.border = '0';
     this.pathInputEl.style.boxShadow = 'none';
     this.pathInputEl.value = this.currentFolderPath;
-    this.pathInputEl.addEventListener('change', (e) => {
+    this.pathInputEl.addEventListener('change', async (e) => {
         this.currentFolderPath = (e.target as HTMLInputElement).value;
-        this.loadFiles();
+        await this.loadFiles();
     });
     
     // 隐藏的系统文件选择器，用于获取目录
@@ -1296,39 +641,17 @@ class PathPromptModal extends Modal {
     browseBtn.style.border = '0';
     browseBtn.style.background = 'transparent';
     browseBtn.addEventListener('click', () => {
-        try {
-            // 首先尝试使用 Electron 系统原生的文件夹选择弹窗
-            const electron = require('electron');
-            if (electron && electron.remote && electron.remote.dialog) {
-                const paths = electron.remote.dialog.showOpenDialogSync({
-                    properties: ['openDirectory']
-                });
-                if (paths && paths.length > 0) {
-                    this.currentFolderPath = paths[0];
-                    if (this.pathInputEl) this.pathInputEl.value = this.currentFolderPath;
-                    this.loadFiles();
-                    return; // 成功使用原生方式
-                } else {
-                    return; // 被用户取消
-                }
-            }
-        } catch (e) {
-            // ignore
-        }
-
-        fileInput.value = ''; // Always clear previous value
-        fileInput.onchange = (e: any) => {
+        fileInput.value = '';
+        fileInput.onchange = async (e: any) => {
             if (e.target.files && e.target.files.length > 0) {
                 const file = e.target.files[0];
-                const sysPath = (file as any).path; // Obsidian 中的绝对路径
+                const sysPath = (file as any).path;
                 let finalFolderPath = '';
 
                 if (sysPath) {
-                    try {
-                        const path = require('path');
-                        const relPath = (file as any).webkitRelativePath; // "MyFolder/sub/file.txt"
+                      try {
+                        const relPath = (file as any).webkitRelativePath;
                         if (relPath && relPath.includes('/')) {
-                            // relPath 中包含了多少个 '/' 就说明嵌套了多少层
                             let depth = relPath.split('/').length - 1;
                             let currentPath = sysPath;
                             while (depth > 0) {
@@ -1337,13 +660,12 @@ class PathPromptModal extends Modal {
                             }
                             finalFolderPath = currentPath;
                         } else {
-                            // 对于普通的文件选择或者不支持 webkitRelativePath，直接取文件的所在目录
                             finalFolderPath = path.dirname(sysPath);
                         }
                         
                         this.currentFolderPath = finalFolderPath;
                         if (this.pathInputEl) this.pathInputEl.value = this.currentFolderPath;
-                        this.loadFiles();
+                        await this.loadFiles();
                     } catch (err) {
                          console.error(err);
                     }
@@ -1374,7 +696,7 @@ class PathPromptModal extends Modal {
     };
     updateModeBtn();
 
-    modeBtn.addEventListener('click', () => {
+    modeBtn.addEventListener('click', async () => {
         if (this.currentMode === 'external') {
             this.currentMode = 'internal';
             this.lastExternalPath = this.currentFolderPath; // 记录外部路径
@@ -1397,7 +719,7 @@ class PathPromptModal extends Modal {
         updateModeBtn();
 
         if (this.pathInputEl) this.pathInputEl.value = this.currentFolderPath;
-        this.loadFiles();
+        await this.loadFiles();
     });
 
     // 2. 搜索框与分类标签栏
@@ -1512,30 +834,25 @@ class PathPromptModal extends Modal {
     });
 
     if (this.currentFolderPath) {
-      this.loadFiles();
+      await this.loadFiles();
     } else {
       this.renderEmptyState('请输入或选择一个文件夹路径开始预览。');
     }
   }
 
-  loadFiles() {
+  async loadFiles() {
       if (!this.currentFolderPath) return;
       try {
-          const fs = require('fs');
-          const path = require('path');
-          const files = fs.readdirSync(this.currentFolderPath);
+          const dirents = await fs.promises.readdir(this.currentFolderPath, { withFileTypes: true });
           
-          this.filesList = files.map((fileName: string) => {
-              const fullPath = path.join(this.currentFolderPath, fileName);
-              try {
-                  const stat = fs.statSync(fullPath);
-                  return {
-                      name: fileName,
-                      path: fullPath,
-                      isDirectory: stat.isDirectory(),
-                      ext: path.extname(fileName).toLowerCase().replace('.', '')
-                  };
-              } catch (e) { return null; }
+          this.filesList = dirents.map((dirent: fs.Dirent) => {
+              const fullPath = path.join(this.currentFolderPath, dirent.name);
+              return {
+                  name: dirent.name,
+                  path: fullPath,
+                  isDirectory: dirent.isDirectory(),
+                  ext: dirent.isDirectory() ? '' : path.extname(dirent.name).toLowerCase().replace('.', '')
+              };
           }).filter((f: any) => f !== null);
 
           // 排序：文件夹在前，文件在后
@@ -1581,16 +898,15 @@ class PathPromptModal extends Modal {
       const filtered = this.filesList.filter(file => {
           if (this.searchQuery && !file.name.toLowerCase().includes(this.searchQuery)) return false;
           
-          if (this.currentTab === 'image' && !file.isDirectory && !['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(file.ext)) return false;
-          if (this.currentTab === 'video' && !file.isDirectory && !['mp4', 'webm', 'mov', 'mkv'].includes(file.ext)) return false;
-          if (this.currentTab === 'audio' && !file.isDirectory && !['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(file.ext)) return false;
+          if (this.currentTab === 'image' && !file.isDirectory && !isImageExt(file.ext)) return false;
+          if (this.currentTab === 'video' && !file.isDirectory && !isVideoExt(file.ext)) return false;
+          if (this.currentTab === 'audio' && !file.isDirectory && !isAudioExt(file.ext)) return false;
           
           return true;
       });
 
       // 添加返回上级目录选项
       try {
-          const path = require('path');
           const parentDir = path.dirname(this.currentFolderPath);
           if (parentDir && parentDir !== this.currentFolderPath) {
               filtered.unshift({
@@ -1640,22 +956,22 @@ class PathPromptModal extends Modal {
           previewDiv.style.overflow = 'hidden';
           previewDiv.style.backgroundColor = 'var(--background-primary)';
           
-          const isImage = !file.isDirectory && ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(file.ext);
-          const isVideo = !file.isDirectory && ['mp4', 'webm', 'mov', 'mkv'].includes(file.ext);
-          
+          const imageCheck = !file.isDirectory && isImageExt(file.ext);
+          const videoCheck = !file.isDirectory && isVideoExt(file.ext);
+
           if (file.isDirectory) {
               const icon = previewDiv.createEl('div', { text: '📁' });
               icon.style.fontSize = '40px';
               icon.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))';
-          } else if (isImage) {
+          } else if (imageCheck) {
               const img = previewDiv.createEl('img');
-              img.src = this.plugin.getConvertPath(file.path);
+              img.src = getConvertPath(this.plugin.app, file.path);
               img.style.maxWidth = '100%';
               img.style.maxHeight = '100%';
               img.style.objectFit = 'contain';
-          } else if (isVideo) {
+          } else if (videoCheck) {
               const video = previewDiv.createEl('video');
-              video.src = this.plugin.getConvertPath(file.path);
+              video.src = getConvertPath(this.plugin.app, file.path);
               video.style.maxWidth = '100%';
               video.style.maxHeight = '100%';
               video.style.objectFit = 'contain';
@@ -1688,13 +1004,13 @@ class PathPromptModal extends Modal {
               item.style.boxShadow = '0 0 0 2px var(--interactive-accent)';
           }
 
-          item.addEventListener('click', (e) => {
+          item.addEventListener('click', async (e) => {
               if (file.isDirectory) {
                   this.currentFolderPath = file.path;
                   this.searchQuery = '';
                   const searchInput = document.querySelector('input[placeholder="搜索该目录下的文件..."]') as HTMLInputElement;
                   if (searchInput) searchInput.value = '';
-                  this.loadFiles();
+                  await this.loadFiles();
               } else {
                   if (e.ctrlKey || e.metaKey) {
                       // Toggle selection
@@ -1718,8 +1034,8 @@ class PathPromptModal extends Modal {
                       this.inputPath = file.path;
                       const nameToUse = this.customName || file.name;
                       this.close();
-                      const isMedia = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'mp4', 'webm', 'mov', 'mkv'].includes(file.ext.toLowerCase());
-                      if (isMedia) {
+                      const media = isMediaExt(file.ext.toLowerCase());
+                      if (media) {
                           this.onSubmit(this.inputPath, \`____GALLERY_CONFIG_COLUMNS_1\`);
                       } else {
                           this.onSubmit(this.inputPath, nameToUse);
@@ -1736,52 +1052,5 @@ class PathPromptModal extends Modal {
   }
 }
 
-class LocalFileLinkerSettingTab extends PluginSettingTab {
-  plugin: LocalFileLinkerPlugin;
 
-  constructor(app: App, plugin: LocalFileLinkerPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    containerEl.createEl('h2', { text: '本地文件映射 & 实时预览设置面板 (Plugin Settings)' });
-
-    new Setting(containerEl)
-      .setName('默认双链格式 (Default Link Format)')
-      .setDesc('决定拖拽或录入本地绝对路径时在 Markdown 内部生成的格式。')
-      .addDropdown(dropdown => dropdown
-        .addOption('custom-protocol', 'custom-protocol:// (推荐，安全平滑)')
-        .addOption('file-uri', 'file:/// 标准协议 (跨端与外部工具兼容)')
-        .addOption('absolute-path', '绝对路径明文 (直接地址形式)')
-        .setValue(this.plugin.settings.defaultLinkStyle)
-        .onChange(async (value: any) => {
-          this.plugin.settings.defaultLinkStyle = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('文档内嵌渲染媒体 (Inline Rendering)')
-      .setDesc('在阅读视图下，自动将带感叹号的 ![视频](local-file://...) 媒体链接原内联转换为播放器、图片组件。')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.inlineRenderEnabled)
-        .onChange(async (value) => {
-          this.plugin.settings.inlineRenderEnabled = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('自适应元数据解析 (Auto-Extract Metadata)')
-      .setDesc('在鼠标悬浮时在 Electron 进程后端智能读取物理文件的大小、类型与文本前几行，更新给弹窗。')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.autoExtractMetadata)
-        .onChange(async (value) => {
-          this.plugin.settings.autoExtractMetadata = value;
-          await this.plugin.saveSettings();
-        }));
-  }
-}
 `;
