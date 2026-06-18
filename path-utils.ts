@@ -1,5 +1,6 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Obsidian Vault adapter 类型不完整，运行时代理可能包含额外方法 */
 import { App } from 'obsidian';
-import { VaultAdapter } from './types';
+import { VaultAdapter, VaultExt } from './types';
 
 export function getCleanLocalPath(href: string): string {
     let filePath = '';
@@ -21,7 +22,7 @@ export function getCleanLocalPath(href: string): string {
 /** Extract clean absolute path from an app://local/ URL */
 export function getCleanAppLocalPath(src: string): string {
     const raw = decodeURIComponent(
-        src.replace(/^app:\/\/local\/[^\/]*\//, 'app://local/').replace('app://local/', '')
+        src.replace(/^app:\/\/local\/[^/]*\//, 'app://local/').replace('app://local/', '')
     );
     const driveMatch = raw.match(/[a-zA-Z]:\//);
     return driveMatch ? raw.substring(raw.indexOf(driveMatch[0])) : raw;
@@ -33,7 +34,7 @@ function getVaultBasePath(app: App): string {
         if (adapter.getBasePath) {
             return adapter.getBasePath().replace(/\\/g, '/').replace(/\/$/, '');
         }
-    } catch (e) {}
+    } catch { /* vault adapter error, return empty string */ }
     return '';
 }
 
@@ -51,7 +52,7 @@ export function getConvertPath(app: App, filePath: string): string {
         const vaultBase = getVaultBasePath(app);
         const relativePath = cleanPath.substring(vaultBase.length).replace(/^\//, '');
         const encoded = relativePath.split('/').map(c => encodeURIComponent(c)).join('/');
-        return (app.vault as any).getResourcePath(encoded).split('?')[0];
+        return (app.vault as unknown as VaultExt).getResourcePath(encoded).split('?')[0];
     }
 
     return `app://local/${cleanPath}`;

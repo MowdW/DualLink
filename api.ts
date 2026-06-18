@@ -9,9 +9,9 @@ export interface DualLinkPublicAPI {
 
 export function createPublicAPI(plugin: LocalFileLinkerPlugin): DualLinkPublicAPI {
   return {
-    generateMarkdownLink: plugin.generateMarkdownLink.bind(plugin),
+    generateMarkdownLink: (fileName: string, filePath: string) => plugin.generateMarkdownLink(fileName, filePath),
     packToVault: () => plugin.packToVault(),
     packOut: () => plugin.packOut(),
-    findExternalFileRec: plugin.findExternalFileRec.bind(plugin),
+    findExternalFileRec: (fileName: string, dir: string, maxDepth?: number, currentDepth?: number) => plugin.findExternalFileRec(fileName, dir, maxDepth, currentDepth),
   };
 }

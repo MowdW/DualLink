@@ -28,11 +28,49 @@ export interface VaultAdapter {
 }
 
 /**
+ * MarkdownView 编辑器接口
+ */
+export interface MarkdownViewEditor {
+  replaceRange(text: string, start: { line: number; ch: number }, end: { line: number; ch: number }): void;
+  getLine(line: number): string;
+}
+
+/**
+ * MarkdownView 扩展接口
+ */
+export interface MarkdownViewWithEditor {
+  editor: MarkdownViewEditor;
+  getMode(): string;
+}
+
+/**
  * 带路径属性的 File 对象（Electron 环境）
  */
 export interface FileWithPath extends File {
   readonly path?: string;
   readonly webkitRelativePath: string;
+}
+
+/**
+ * 支持 webkitdirectory 的 HTMLInputElement
+ */
+export interface HTMLInputElementWithDirectory extends HTMLInputElement {
+  webkitdirectory: boolean;
+}
+
+/**
+ * MetadataCache 扩展接口
+ */
+export interface MetadataCacheExt {
+  resolvedLinks: Record<string, Record<string, number>>;
+  getBacklinksForFile(file: import('obsidian').TFile): { data: Record<string, unknown> } | undefined;
+}
+
+/**
+ * Vault 扩展接口
+ */
+export interface VaultExt {
+  getResourcePath(path: string): string;
 }
 
 /**

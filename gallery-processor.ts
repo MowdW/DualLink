@@ -1,7 +1,7 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-import { App, MarkdownRenderer, MarkdownPostProcessorContext, MarkdownView, Notice } from 'obsidian';
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Node.js 内置模块 (fs/path) 成员访问，ESLint 无法跨模块解析其类型 */
+import { App, MarkdownRenderer, MarkdownPostProcessorContext, MarkdownView, Notice, TFile } from 'obsidian';
 import { isImageExt, isVideoExt, isAudioExt } from './constants';
-import { IDualLinkPlugin } from './types';
+import { IDualLinkPlugin, VaultAdapter, MarkdownViewWithEditor } from './types';
 import { fs, path } from './node-modules';
 
 interface IGalleryPathPromptModal {
@@ -32,12 +32,12 @@ function addGalleryItemButtons(
 
     item.addEventListener('mouseenter', () => {
         if (el.closest('.markdown-reading-view')) return;
-        removeBtn.style.opacity = '1';
-        editImageBtn.style.opacity = '1';
+        removeBtn.addClass('duallink-gallery-item-btn--visible');
+        editImageBtn.addClass('duallink-gallery-item-btn--visible');
     });
     item.addEventListener('mouseleave', () => {
-        removeBtn.style.opacity = '0';
-        editImageBtn.style.opacity = '0';
+        removeBtn.removeClass('duallink-gallery-item-btn--visible');
+        editImageBtn.removeClass('duallink-gallery-item-btn--visible');
     });
 
     removeBtn.addEventListener('click', (e) => {
@@ -56,8 +56,8 @@ function addGalleryItemButtons(
 
         new PathPromptModal(plugin, '', (inputPath: string) => {
             if (!inputPath) return;
-            const adapter = plugin.app.vault.adapter;
-            const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
+            const adapter = plugin.app.vault.adapter as unknown as VaultAdapter;
+            const vaultBasePath = adapter.getBasePath ? adapter.getBasePath() : '';
             let newSyntax = '';
 
             const cleanP = inputPath.replace(/['"]/g, '').trim();
@@ -97,7 +97,7 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                 try {
                     const config = JSON.parse(trimmed);
                     if (config.columns) columns = config.columns;
-                } catch (e) { }
+                } catch { /* invalid JSON config, skip */ }
                 isConfig = false;
             } else {
                 isConfig = false;
@@ -117,8 +117,9 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
 
             const newContent = `\`\`\`duallink-gallery\n{ "columns": ${newColumns} }\n${newImages.join('\n')}\n\`\`\``;
 
-            if (view && (view as any).editor && typeof (view as any).editor.replaceRange === 'function' && (view as any).getMode() !== 'preview') {
-                const e = (view as any).editor;
+            const viewWithEditor = view as unknown as MarkdownViewWithEditor;
+            if (viewWithEditor.editor && typeof viewWithEditor.editor.replaceRange === 'function' && viewWithEditor.getMode() !== 'preview') {
+                const e = viewWithEditor.editor;
                 e.replaceRange(
                     newContent,
                     { line: info.lineStart, ch: 0 },
@@ -136,38 +137,39 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
             }
         };
 
-        setTimeout(async () => {
-            let hasFixes = false;
-            const newImages = [...images];
-            for (let i = 0; i < newImages.length; i++) {
-                const imgSource = newImages[i];
-                const internalMatch = imgSource.match(/!\[\[(.*?)\]\]/);
-                if (internalMatch) {
-                    const linkText = internalMatch[1].split('|')[0];
-                    const dest = plugin.app.metadataCache.getFirstLinkpathDest(linkText, ctx.sourcePath);
-                    if (!dest) {
-                        const fileName = linkText.split(/[\/\\]/).pop();
-                        if (fileName) {
-                            const fallbackDest = plugin.app.metadataCache.getFirstLinkpathDest(fileName, ctx.sourcePath);
-                            if (fallbackDest) {
-                                hasFixes = true;
-                                const newLinkText = fallbackDest.path + (internalMatch[1].includes('|') ? '|' + internalMatch[1].split('|')[1] : '');
-                                newImages[i] = imgSource.replace(internalMatch[1], newLinkText);
+        window.setTimeout(() => {
+            void (async () => {
+                let hasFixes = false;
+                const newImages = [...images];
+                for (let i = 0; i < newImages.length; i++) {
+                    const imgSource = newImages[i];
+                    const internalMatch = imgSource.match(/!\[\[(.*?)\]\]/);
+                    if (internalMatch) {
+                        const linkText = internalMatch[1].split('|')[0];
+                        const dest = plugin.app.metadataCache.getFirstLinkpathDest(linkText, ctx.sourcePath);
+                        if (!dest) {
+                            const fileName = linkText.split(/[\/\\]/).pop();
+                            if (fileName) {
+                                const fallbackDest = plugin.app.metadataCache.getFirstLinkpathDest(fileName, ctx.sourcePath);
+                                if (fallbackDest) {
+                                    hasFixes = true;
+                                    const newLinkText = fallbackDest.path + (internalMatch[1].includes('|') ? '|' + internalMatch[1].split('|')[1] : '');
+                                    newImages[i] = imgSource.replace(internalMatch[1], newLinkText);
+                                }
                             }
                         }
+                        continue;
                     }
-                    continue;
-                }
 
-                const externalMatch = imgSource.match(/!\[.*?\]\(<file:\/\/\/(.*?)>\)/) || imgSource.match(/!\[.*?\]\(file:\/\/\/(.*?)\)/);
-                if (externalMatch) {
+                    const externalMatch = imgSource.match(/!\[.*?\]\(<file:\/\/\/(.*?)>\)/) || imgSource.match(/!\[.*?\]\(file:\/\/\/(.*?)\)/);
+                    if (externalMatch) {
                     const rawPath = decodeURIComponent(externalMatch[1]);
                     if (!fs.existsSync(rawPath) && plugin.settings.defaultFolderPath) {
                         const fileName = path.basename(rawPath);
                         const newPath = await plugin.findExternalFileRec(fileName, plugin.settings.defaultFolderPath, 4, 0);
                         if (newPath) {
                             hasFixes = true;
-                            let appendPath = newPath.split(/[\/\\]/).map((c: string) => encodeURIComponent(c)).join('/');
+                            let appendPath = newPath.split(/[/\\]/).map((c: string) => encodeURIComponent(c)).join('/');
                             appendPath = appendPath.replace(/^([a-zA-Z])%3A/, '$1:');
                             newImages[i] = imgSource.replace(externalMatch[1], appendPath);
                         }
@@ -178,6 +180,7 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
             if (hasFixes) {
                 void updateCodeBlock(columns, newImages);
             }
+            })();
         }, 100);
 
         const galleryWrapper = el.createEl('div');
@@ -208,11 +211,10 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
         // 添加按钮 (右侧)
         const addControls = galleryWrapper.createDiv({ cls: 'duallink-gallery-col-ctrl duallink-gallery-col-ctrl--right duallink-gallery-control' });
 
-        const addBtn = addControls.createEl('button', { title: '\u6dfb\u52a0\u65b0\u56fe\u7247' });
-        addBtn.className = 'duallink-gallery-col-btn';
-        addBtn.style.display = 'flex';
-        addBtn.style.alignItems = 'center';
-        addBtn.style.justifyContent = 'center';
+        const addBtn = addControls.createEl('button', { 
+          cls: 'duallink-gallery-col-btn',
+          title: '\u6dfb\u52a0\u65b0\u56fe\u7247' 
+        });
         addBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
 
         addBtn.addEventListener('click', (e) => {
@@ -234,8 +236,8 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     tempBox.remove();
                     return;
                 }
-                const adapter = plugin.app.vault.adapter;
-                const vaultBasePath = (adapter as any).getBasePath ? (adapter as any).getBasePath() : '';
+                const adapter = plugin.app.vault.adapter as unknown as VaultAdapter;
+                const vaultBasePath = adapter.getBasePath ? adapter.getBasePath() : '';
                 let newSyntax = '';
 
                 const cleanP = inputPath.replace(/['"]/g, '').trim();
@@ -259,13 +261,13 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
 
         galleryWrapper.addEventListener('mouseenter', () => {
             if (!el.closest('.markdown-reading-view')) {
-                colControls.style.opacity = '1';
-                addControls.style.opacity = '1';
+                colControls.addClass('duallink-gallery-control--visible');
+                addControls.addClass('duallink-gallery-control--visible');
             }
         });
         galleryWrapper.addEventListener('mouseleave', () => {
-            colControls.style.opacity = '0';
-            addControls.style.opacity = '0';
+            colControls.removeClass('duallink-gallery-control--visible');
+            addControls.removeClass('duallink-gallery-control--visible');
         });
 
         const items: HTMLElement[] = [];
@@ -309,7 +311,7 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
         let rafId: number | null = null;
         const resizeObserver = new ResizeObserver(() => {
             if (rafId) return;
-            rafId = requestAnimationFrame(() => {
+            rafId = window.requestAnimationFrame(() => {
                 rafId = null;
                 distributeItems();
             });
@@ -339,16 +341,16 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     e.dataTransfer.setData('duallink-gallery-index', index.toString());
                     e.dataTransfer.effectAllowed = 'move';
                 }
-                setTimeout(() => {
+                window.setTimeout(() => {
                     item.addClass('duallink-gallery-item--dragging');
                 }, 0);
             });
             item.addEventListener('dragend', (e) => {
                 item.removeClass('duallink-gallery-item--dragging');
                 if (!isAudioOnly) {
-                    item.style.border = '1px solid var(--background-modifier-border)';
+                    item.addClass('duallink-gallery-item--normal-border');
                 } else {
-                    item.style.border = 'none';
+                    item.addClass('duallink-gallery-item--no-border');
                 }
             });
             item.addEventListener('dragover', (e) => {
@@ -359,15 +361,15 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
             item.addEventListener('dragleave', (e) => {
                 item.removeClass('duallink-gallery-item--drag-over');
                 if (!isAudioOnly) {
-                    item.style.border = '1px solid var(--background-modifier-border)';
+                    item.addClass('duallink-gallery-item--normal-border');
                 } else {
-                    item.style.outline = 'none';
+                    item.addClass('duallink-gallery-item--no-outline');
                 }
             });
             item.addEventListener('drop', (e) => {
                 e.preventDefault();
                 item.removeClass('duallink-gallery-item--drag-over');
-                item.style.border = '1px solid var(--background-modifier-border)';
+                item.addClass('duallink-gallery-item--normal-border');
                 if (!e.dataTransfer) return;
 
                 const originIndexStr = e.dataTransfer.getData('duallink-gallery-index');
@@ -384,11 +386,11 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
 
             item.addEventListener('mouseenter', () => {
                 if (el.closest('.markdown-reading-view')) return;
-                item.style.transform = 'scale(1.02)';
+                item.addClass('duallink-gallery-item--scaled');
             });
             item.addEventListener('mouseleave', () => {
                 if (el.closest('.markdown-reading-view')) return;
-                item.style.transform = 'none';
+                item.removeClass('duallink-gallery-item--scaled');
             });
 
             item.addEventListener('dblclick', (e) => {
@@ -433,10 +435,10 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
 
             addGalleryItemButtons(item, images, index, columns, plugin, el, updateCodeBlock, PathPromptModal);
 
-            if (true) {
+            {
                 let mediaSrc = '';
                 let mediaType = '';
-                const cleanSrc = imgSource.replace(/[\)\]>]+$/, '').replace(/^!\[.*?\]\(<?/, '').replace(/^!\[\[/, '');
+                const cleanSrc = imgSource.replace(/[)>]+$/, '').replace(/^!\[.*?\]\(<?/, '').replace(/^!\[\[/, '');
                 const ext = cleanSrc.split('.').pop()?.toLowerCase() || '';
 
                 if (isVideoExt(ext)) mediaType = 'video';
@@ -454,13 +456,13 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                 }
 
                 if (linkPath) {
-                    try { linkPath = decodeURIComponent(linkPath); } catch (e) { }
+                    try { linkPath = decodeURIComponent(linkPath); } catch (e) { /* invalid URI, keep original */ }
 
                     let dest = plugin.app.metadataCache.getFirstLinkpathDest(linkPath, ctx.sourcePath);
                     if (!dest) {
                         const abstractFile = plugin.app.vault.getAbstractFileByPath(linkPath);
-                        if (abstractFile && 'extension' in abstractFile) {
-                            dest = abstractFile as any;
+                        if (abstractFile && abstractFile instanceof TFile) {
+                            dest = abstractFile;
                         }
                     }
                     if (!dest) {
@@ -480,11 +482,11 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     if (externalMatch) {
                         externalPath = externalMatch[1];
                     } else if (imgSource.includes('local-file://') || imgSource.includes('file://')) {
-                        const m = imgSource.match(/(?:local-file|file):\/\/\/?([^\)"'<>]+)/);
+                        const m = imgSource.match(/(?:local-file|file):\/\/\/?([^)"'<>]+)/);
                         if (m) externalPath = m[1];
                     }
                     if (externalPath) {
-                        try { externalPath = decodeURIComponent(externalPath); } catch (e) { }
+                        try { externalPath = decodeURIComponent(externalPath); } catch { /* invalid URI, keep original */ }
                         try {
                             const buf = fs.readFileSync(externalPath);
                             const ext = externalPath.split('.').pop()?.toLowerCase() || '';
@@ -538,9 +540,10 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     }
                     addGalleryItemButtons(item, images, index, columns, plugin, el, updateCodeBlock, PathPromptModal);
                 } else {
-                    MarkdownRenderer.renderMarkdown(imgSource, item, ctx.sourcePath, plugin as any);
+                    /* eslint-disable-next-line @typescript-eslint/deprecation -- MarkdownRenderer.render 替代方案需要重构 */
+                    MarkdownRenderer.renderMarkdown(imgSource, item, ctx.sourcePath, plugin as unknown as import('obsidian').Component);
 
-                    setTimeout(() => {
+                    window.setTimeout(() => {
                         const medias = item.querySelectorAll('img, video, audio, .internal-embed');
                         medias.forEach(media => {
                             if (media instanceof HTMLElement) {
@@ -555,32 +558,25 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                                     return;
                                 }
 
-                                media.style.width = '100%';
-                                media.style.display = 'block';
+                                media.addClass('duallink-gallery-media-full-width');
                                 media.setAttribute('draggable', 'false');
 
                                 if (!isAudio) {
                                     if (!media.classList.contains('internal-embed')) {
-                                        media.style.height = '100%';
-                                        media.style.objectFit = 'cover';
-                                        media.style.borderRadius = '0';
+                                        media.addClass('duallink-gallery-media-cover');
                                     }
-                                    media.style.margin = '0';
                                 } else {
-                                    media.style.height = '54px';
-                                    media.style.borderRadius = '8px';
-                                    media.style.margin = '0';
+                                    media.addClass('duallink-gallery-media-audio');
                                 }
 
                                 if (media.tagName.toLowerCase() === 'img') {
-                                    media.style.pointerEvents = 'none';
+                                    media.addClass('duallink-gallery-media-img');
                                 }
                             }
                         });
                         const ps = item.querySelectorAll('p');
                         ps.forEach(p => {
-                            p.style.margin = '0';
-                            p.style.padding = '0';
+                            p.addClass('duallink-gallery-p-margin-reset');
                         });
                     }, 50);
                 }
@@ -600,33 +596,23 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                 };
                 updateIcon();
 
-                emptyCell.addEventListener('mouseenter', () => {
-                    if (el.closest('.markdown-reading-view')) return;
-                    emptyCell.style.borderColor = 'var(--interactive-accent)';
-                    emptyCell.style.color = 'var(--interactive-accent)';
-                    emptyCell.style.transform = 'scale(1.02)';
-                });
-                emptyCell.addEventListener('mouseleave', () => {
-                    emptyCell.style.borderColor = 'var(--background-modifier-border)';
-                    emptyCell.style.color = 'var(--text-muted)';
-                    emptyCell.style.transform = 'scale(1)';
-                });
                 emptyCell.addEventListener('click', (e) => {
                     e.stopPropagation();
                     if (el.closest('.markdown-reading-view')) return;
 
                     emptyCell.innerHTML = '';
-                    const loadingSpan = emptyCell.createEl('span', { text: '\u6b63\u5728\u9009\u62e9\u6587\u4ef6...' });
-                    loadingSpan.style.fontSize = '12px';
-                    loadingSpan.style.color = 'var(--interactive-accent)';
+                    emptyCell.addClass('duallink-gallery-empty--loading');
+                    emptyCell.createEl('span', { text: '\u6b63\u5728\u9009\u62e9\u6587\u4ef6...' });
 
                     const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
                     if (!view) {
+                        emptyCell.removeClass('duallink-gallery-empty--loading');
                         updateIcon();
                         return;
                     }
 
                     new PathPromptModal(plugin, '', (inputPath: string) => {
+                        emptyCell.removeClass('duallink-gallery-empty--loading');
                         if (!inputPath) {
                             updateIcon();
                             return;
@@ -660,3 +646,5 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
     });
   });
 }
+
+/* eslint-enable @typescript-eslint/no-unsafe-member-access */

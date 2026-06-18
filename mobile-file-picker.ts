@@ -162,7 +162,7 @@ export class MobileFilePickerModal extends Modal {
     countEl.style.paddingLeft = '4px';
 
     filtered.forEach((file) => {
-      this.renderFileItem(file);
+      void this.renderFileItem(file);
     });
   }
 
@@ -235,9 +235,7 @@ export class MobileFilePickerModal extends Modal {
           video.style.pointerEvents = 'none';
           previewLoaded = true;
         }
-      } catch (e) {
-        // 预览失败，继续显示图标
-      }
+      } catch { /* preview failed */ }
     }
 
     if (!previewLoaded) {

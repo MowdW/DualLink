@@ -1,90 +1,116 @@
 # DualLink (Obsidian Local File Linker)
 
-**DualLink** 是一款专为 Obsidian 打造的高效本地及外部物理文件关联、管理与实时预览插件。
-由于 Obsidian 本身的保险箱机制限制，我们在涉及大容量资源文件（如几十GB的视频、大量无损音频、工程源文件）或系统级别不同网盘映射时，往往无法或者不适合将它们悉数移入 `.obsidian` 保险箱中。本插件完美解决了“既需要外部路径大文件关联，又需要内置丝滑预览”的痛点，帮助您在同一面板内无缝整合**外部绝对路径文件**与**内部保险箱文件**。
+**DualLink** is an efficient Obsidian plugin for linking, managing, and live previewing local and external physical files.
+
+Due to Obsidian's vault mechanism limitations, handling large resource files (such as videos of tens of GB, lossless audio collections, or engineering source files) or system-level network drive mappings often requires keeping them outside the `.obsidian` vault. This plugin perfectly solves the pain point of "needing external path large file associations while also requiring smooth built-in preview", helping you seamlessly integrate **external absolute path files** and **internal vault files** within the same panel.
 
 ---
 
-## 🌟 核心特性
+## 🌟 Core Features
 
-- **📂 双轨模式驱动 (Dual Link Mode)**
-  左侧边栏内置了一个交互式文件浏览器，支持一键在 **📦 内部库模式** 和 **🌐 外部路径模式** 之间任意切换。您可以用它来快速浏览外部磁盘上的海量图片与视频。
-- **🖱️ 极速拖入映射**
-  直接将外部文件脱拽进入 Obsidian 编辑器，即可瞬间自动转为安全平滑的 `local-file://` 关联软链，免除枯燥的手敲路径过程。
-- **👁️ 实时悬浮与内嵌预览**
-  在阅读或是编辑状态下，只需将鼠标悬浮在生成的软链上方，即可调出精致的卡片式预览（支持常见图片格式）。如果开启内嵌模式，更会在文档渲染流中直接呈递外部图像。
-- **🎵 多媒体即时解码**
-  不再局限于图片！针对 `.mp4`, `.webm`, `.mp3` 等格式，支持内联渲染或点击原生应用激活打开，不将大媒体耗费保险箱一丝一毫空间。
-- **⚙️ 多形式协议适配**
-  提供 3 种开箱即用的双链注入协议格式以适应各种进阶玩家场景：
-  1. `custom-protocol://` (主推：安全防跨域沙箱隔离卡顿)
-  2. `file:///` (标准跨工具兼容协议)
-  3. `绝对路径明文` (最硬核的原始直接地址)
-- **✨ 智能区分链接**
-  在文件浏览器点选对应文件注入文档时，它会自动判断：若是外部资源，产生对应格式外链及 `![]()`; 若处于“内部库模式”，自动精准推导为标准的内部双链格式 `[[ ]]` 以及媒体资源自动添加前缀 `![[ ]]`。
-
----
-
-## 🚀 安装步骤
-
-> 目前插件处于非官方社区市场阶段，需通过本地手动挂载的方式开启。
-
-1. **编译构建** (如果您从源码抓取本工程)
-   通过 Node 环境运行对应的 build 或者打包命令，一般会生成 `main.js` 和 `manifest.json` 两个产物。
-2. **移动到插件目录**
-   打开您的 Obsidian 库位置，进入 `.obsidian/plugins` 目录。
-   在其中新建一个名为 `obsidian-dual-link` 的空文件夹。
-   将编译生成的 `main.js` 和 `manifest.json` 完整复制进入此目录中。
-3. **安全模式设置**
-   启动 Obsidian，进入 **设置 (Settings) -> 第三方插件 (Community Plugins)**。
-   若处于“安全模式 (Safe Mode)”则关闭它，向下拉寻找名为 **DualLink** 的插件卡片，将开关拨置 **打开状态**。
+- **📂 Dual Link Mode**
+  The left sidebar includes an interactive file browser that supports one-click switching between **📦 Internal Vault Mode** and **🌐 External Path Mode**. You can use it to quickly browse massive images and videos on external disks.
+- **🖱️ Drag & Drop Mapping**
+  Directly drag external files into the Obsidian editor to instantly convert them into safe and smooth `local-file://` association links, eliminating tedious manual path typing.
+- **👁️ Hover & Inline Preview**
+  In reading or editing mode, simply hover over the generated link to reveal a elegant card-style preview (supports common image formats). If inline mode is enabled, external images will be rendered directly in the document flow.
+- **🎵 Multimedia Instant Decoding**
+  No longer limited to images! For formats like `.mp4`, `.webm`, `.mp3`, etc., supports inline rendering or native application activation, without consuming any vault storage space.
+- **⚙️ Multi-Protocol Adaptation**
+  Provides 3 ready-to-use link injection protocol formats for advanced user scenarios:
+  1. `custom-protocol://` (Recommended: safe sandbox isolation)
+  2. `file:///` (Standard cross-tool compatible protocol)
+  3. `Absolute Path` (Raw direct address)
+- **✨ Smart Link Detection**
+  When selecting files from the browser to inject into documents, it automatically determines: for external resources, generates corresponding external link format `![]()`; for "Internal Vault Mode", automatically derives standard internal link format `[[ ]]` and media resources auto-add prefix `![[ ]]`.
 
 ---
 
-## 📖 交互演示与使用说明
+## 🚀 Installation
 
-### 1. 左侧外源文件浏览器
-在成功开启插件后，您会在左边栏 (Left Ribbon) 发现一枚新图标。点击之后即可展开专属的交互面板：
-- **切换路径模式**：点击头部的 📦/🌐 按钮组合，随时回到内部保险箱或上一次打开的外部根路径。
-- **浏览文件夹**：点击 “浏览 (选择文件夹)”，呼出原生资源管理器指定外部包含海量资料的硬盘位次。
-- **快捷过滤/标签**：面板上部附带实时文本过滤以及媒体格式过滤（全部/图片/视频/音频），方便快速在几十个海量文件中抓取想要的目标。
-- **单击注入文档**：鼠标定位于编辑面板之后，在这个列表里单击任意文件，插件便会把这段文件的引用直接注入于焦点所在。
+> The plugin is currently in non-official community market stage, requires local manual mounting to enable.
 
-### 2. Markdown 内拖拽 (Drag & Drop)
-随意开启任何系统管理器，点按选中系统中的文件，直接拖拽到正在编辑的 Markdown 文本位置上放手，您就会看到一条漂亮的 `...` 链接或者图片标签弹射而结。
-
-### 3. 三种生成格式设定 (Settings)
-打开插件对应的设置项，即可更改“**默认双链格式**”：
-- **`custom-protocol:// (推荐，安全平滑)`** 
-  利用了 Obsidian 底层暴露的安全协议路由（以 `local-file://` 头引导）。好处在于**无视跨域与严格的安全策略限制**，可以无死角加载外部磁盘内容，稳定不出报错。
-- **`file:/// 标准协议 (跨端与外部工具兼容)`**
-  生成的格式以传统浏览器 file:// 协议开头。此方案在您同时利用其他三方外部 Markdown 编辑器来处理本库时能达到更好的识别效果。但在最新版高严密型配置环境中，它可能由于严格跨域策略遭到加载驳回。
-- **`绝对路径明文 (直接地址形式)`**
-  不添加任何花巧协议标签，所拖之路径为何，落进 Markdown 就是最粗暴的 `C:\Users\...` 裸字符格式。纯作为物理档案管理的目录树登记时推荐。
-
-### 4. 多图分栏展示与智能修正 (Gallery & Path Auto-Correction)
-- **快捷组图插入**：在左边栏的文件浏览器面板中浏览图片/视频时：
-  - **单张插入**：正常单击单张媒体文件，将以 1 栏的形式无缝插入到文档中。
-  - **多选分栏**：按住键盘 `Ctrl` 或 `Cmd` 键并单击多张媒体文件，面板下方会出现“插入 N 张图 (分 N 栏)”按钮（系统会自动计算理想排布版式，最高支持单行 5 栏并排展示）。点击即可一件生成优雅的 ````duallink-gallery```` 画廊代码块。
-- **双向脱管防漏修**（路径自动纠正机制）：对于采用此分布模式渲染的画廊内容：
-  - 内部链接若因为文件夹归档调动而变成死链，插件将利用内部 API 在全库范围内自动寻址归位，修复链接指向。
-  - 如果被引用的外部图片原始路径受到搬迁、磁盘字母变动等影响产生404，只需其仍然处于当前设定的「默认外部资源根目录」之下，插件将进行后台跨深层遍历寻找，并在寻回目标后静默修改并修复原 Markdown 内的源路径！
+1. **Build from Source** (if you cloned this project)
+   Run the build or package command via Node environment, typically generating `main.js` and `manifest.json`.
+2. **Move to Plugin Directory**
+   Open your Obsidian vault location, navigate to `.obsidian/plugins` directory.
+   Create a new empty folder named `obsidian-dual-link`.
+   Copy the compiled `main.js`, `styles.css`, and `manifest.json` into this directory.
+3. **Safe Mode Settings**
+   Start Obsidian, go to **Settings -> Community Plugins**.
+   If in "Safe Mode", turn it off, scroll down to find the **DualLink** plugin card, and toggle it to **On**.
 
 ---
 
-## 🛠 开发与构建指令
+## 📖 Usage Guide
 
-如果您想基于此工程二次调整：
-\`\`\`bash
-# 安装底层依赖
+### 1. Left External File Browser
+After enabling the plugin, you'll find a new icon in the left ribbon. Click to expand the interactive panel:
+- **Switch Path Mode**: Click the 📦/🌐 button combination to toggle between internal vault and last opened external root path.
+- **Browse Folder**: Click "Browse" to invoke native file manager to specify external disk location.
+- **Quick Filter/Tags**: Panel includes real-time text filter and media format filter (All/Images/Video/Audio).
+- **Click to Inject**: Position cursor in editor, click any file in the list to inject the reference.
+
+### 2. Markdown Drag & Drop
+Open any system file manager, select files, drag directly to Markdown text position to generate links or image tags.
+
+### 3. Three Generation Format Settings
+Open plugin settings to change "Default Link Format":
+- **`custom-protocol:// (Recommended)`** 
+  Uses Obsidian's exposed safe protocol routing (starting with `local-file://`). Benefits: **ignores cross-origin and strict security policy restrictions**, can load external disk content without errors.
+- **`file:/// Standard Protocol`**
+  Generated format starts with traditional browser file:// protocol. Better compatibility when using other third-party Markdown editors. May be blocked in strict security configurations.
+- **`Absolute Path`**
+  No protocol tags, raw `C:\Users\...` format. Recommended for physical archive management directory registration.
+
+### 4. Gallery & Path Auto-Correction
+- **Quick Gallery Insert**: Browse images/videos in the file browser panel:
+  - **Single Insert**: Click a media file to insert with 1-column format.
+  - **Multi-Select Columns**: Hold `Ctrl` or `Cmd` and click multiple files, "Insert N images (N columns)" button appears (auto-calculates ideal layout, supports up to 5 columns). Click to generate elegant ````duallink-gallery```` code block.
+- **Path Auto-Correction**: For gallery content rendered in this format:
+  - If internal links become dead due to folder restructuring, plugin will use internal API to search vault-wide and fix link references.
+  - If external image original path is affected by relocation or disk letter changes, as long as it's still within the configured "Default External Resource Root Directory", plugin will perform background deep traversal search and silently fix the Markdown source path after finding the target!
+
+---
+
+## 🛠 Development & Build Commands
+
+If you want to modify based on this project:
+```bash
+# Install dependencies
 npm install
 
-# 利用前端监听模式即时刷新调试
+# Frontend watch mode for instant debugging
 npm run dev
 
-# 构建输出正式环境目标件
+# Build production targets
 npm run build
-\`\`\`
+```
 
-## 📝 License 许可证
+---
+
+## 中文说明
+
+**DualLink** 是一款专为 Obsidian 打造的高效本地及外部物理文件关联、管理与实时预览插件。
+由于 Obsidian 本身的保险箱机制限制，我们在涉及大容量资源文件（如几十GB的视频、大量无损音频、工程源文件）或系统级别不同网盘映射时，往往无法或者不适合将它们悉数移入 `.obsidian` 保险箱中。本插件完美解决了"既需要外部路径大文件关联，又需要内置丝滑预览"的痛点，帮助您在同一面板内无缝整合**外部绝对路径文件**与**内部保险箱文件**。
+
+### 核心特性
+
+- **📂 双轨模式驱动** - 左侧边栏内置交互式文件浏览器，支持一键在内部库模式和外部路径模式之间切换
+- **🖱️ 极速拖入映射** - 直接将外部文件拖拽进入编辑器，自动转为 `local-file://` 关联软链
+- **👁️ 实时悬浮与内嵌预览** - 鼠标悬浮即可调出卡片式预览，支持图片内嵌渲染
+- **🎵 多媒体即时解码** - 支持 `.mp4`, `.webm`, `.mp3` 等格式内联渲染
+- **⚙️ 多形式协议适配** - 提供 3 种链接格式：custom-protocol、file:///、绝对路径
+- **✨ 智能区分链接** - 自动判断内外资源，生成对应格式链接
+
+### 安装步骤
+
+1. 编译构建生成 `main.js`、`styles.css` 和 `manifest.json`
+2. 将文件复制到 `.obsidian/plugins/obsidian-dual-link` 目录
+3. 在 Obsidian 设置中启用第三方插件，打开 DualLink
+
+---
+
+## 📝 License
+
 MIT License

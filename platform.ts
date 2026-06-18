@@ -6,6 +6,8 @@ export const isMobile = (): boolean => {
     return !isDesktop();
 };
 
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Electron 环境中 window.require 确实存在 */
 export const isElectron = (): boolean => {
-    return isDesktop() && typeof (window as any).require !== 'undefined';
+    return isDesktop() && typeof (window as unknown as { require: unknown }).require !== 'undefined';
 };
+/* eslint-enable */

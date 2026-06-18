@@ -3,10 +3,9 @@
  * Built for Obsidian (runs on Electron)
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Node.js 内置模块 (fs/path) 及 Obsidian Vault adapter 运行时代理成员访问 */
 import { 
   Plugin, 
-  App, 
   MarkdownView, 
   Notice,
   Modal,
@@ -14,7 +13,7 @@ import {
   setIcon,
   Editor
 } from 'obsidian';
-import { isDesktop, isMobile, isElectron } from './platform';
+import { isDesktop } from './platform';
 import { isImageExt, isVideoExt, isAudioExt, isMediaExt } from './constants';
 import { getCleanLocalPath, getCleanAppLocalPath } from './path-utils';
 import { electron, fs, path } from './node-modules';
@@ -28,7 +27,7 @@ import { LocalFileLinkerSettingTab } from './setting-tab';
 import { MobileFilePickerModal } from './mobile-file-picker';
 import { createPublicAPI, DualLinkPublicAPI } from './api';
 
-import { LocalFileLinkerSettings, FileItem, IDualLinkPlugin, VaultAdapter, FileWithPath } from './types';
+import { LocalFileLinkerSettings, FileItem, IDualLinkPlugin, VaultAdapter, FileWithPath, HTMLInputElementWithDirectory } from './types';
 
 
 const DEFAULT_SETTINGS: LocalFileLinkerSettings = {
@@ -63,6 +62,8 @@ export default class LocalFileLinkerPlugin extends Plugin {
       // 1. 注册编辑器拖拽 (Drag & Drop) 拦截监听，拖入任何系统外围文件即刻自动生成映射外链
       this.registerEvent(
         this.app.workspace.on('editor-drop', (evt: DragEvent, editor: Editor) => {
+          if (evt.defaultPrevented) return;
+          
           const files = evt.dataTransfer?.files;
           if (!files || files.length === 0) return;
 
@@ -96,7 +97,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
         id: 'insert-local-file-link',
         name: '插入本地物理文件绝对路径链接',
         editorCallback: (editor) => {
-          this.promptForLocalFileLink(editor);
+          void this.promptForLocalFileLink(editor);
         }
       });
 
@@ -164,7 +165,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
             }
             const blob = new Blob([buf], { type: mime });
             return URL.createObjectURL(blob);
-          } catch (e) {
+          } catch {
             return null;
           }
         };
@@ -194,7 +195,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
               }
             } else if (isAudioExt(ext)) {
               if (blobUrl) {
-                const audio = document.createElement('audio');
+                const audio = activeDocument.createElement('audio');
                 audio.src = blobUrl;
                 audio.controls = true;
                 audio.className = 'duallink-rendered-audio';
@@ -363,7 +364,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<LocalFileLinkerSettings>);
   }
 
   async saveSettings() {
@@ -660,41 +661,26 @@ export class PathPromptModal extends Modal {
     
     // 检测设备并设置合适的弹窗尺寸
     const isMobileDevice = window.innerWidth < 768;
-    // 设置弹窗尺寸，移动端用全宽
-    this.modalEl.style.width = isMobileDevice ? '100%' : '80vw';
-    this.modalEl.style.maxWidth = isMobileDevice ? 'none' : '1000px';
-    this.modalEl.style.maxHeight = '80vh';
-    this.modalEl.style.minHeight = isMobileDevice ? '60vh' : '40vh';
-    this.modalEl.style.height = 'auto'; 
-    this.modalEl.style.display = 'flex';
-    this.modalEl.style.flexDirection = 'column';
+    
+    this.modalEl.addClass('dual-link-modal');
+    if (isMobileDevice) {
+      this.modalEl.addClass('dual-link-modal--mobile');
+    }
     
     // 内容区的布局配置
-    contentEl.style.display = 'flex';
-    contentEl.style.flexDirection = 'column';
-    contentEl.style.flex = '1';
-    contentEl.style.overflow = 'hidden';
+    contentEl.addClass('content-wrapper');
 
     // 顶部设置区域
-    const topArea = contentEl.createDiv();
-    topArea.style.display = 'flex';
-    topArea.style.flexDirection = 'column';
-    topArea.style.gap = '12px';
-    topArea.style.marginBottom = '12px';
-    topArea.style.flexShrink = '0';
+    const topArea = contentEl.createDiv({ cls: 'top-area' });
     
     // 1. 文件夹路径选择行 - 移动端优化
-    const pathRow = topArea.createDiv();
-    pathRow.style.display = 'flex';
-    pathRow.style.gap = '8px';
-    pathRow.style.alignItems = 'center';
-    pathRow.style.flexWrap = isMobileDevice ? 'wrap' : 'nowrap';
+    const pathRow = topArea.createDiv({ cls: 'path-row' });
     
-    this.pathInputEl = pathRow.createEl('input', { type: 'text', placeholder: '粘贴文件夹的绝对路径...' });
-    this.pathInputEl.style.flex = '1';
-    this.pathInputEl.style.border = '0';
-    this.pathInputEl.style.boxShadow = 'none';
-    this.pathInputEl.style.minWidth = isMobileDevice ? '120px' : 'auto';
+    this.pathInputEl = pathRow.createEl('input', { 
+      type: 'text', 
+      placeholder: '粘贴文件夹的绝对路径...',
+      cls: 'path-input'
+    });
     this.pathInputEl.value = this.currentFolderPath;
     this.pathInputEl.addEventListener('change', async (e) => {
         this.currentFolderPath = (e.target as HTMLInputElement).value;
@@ -702,11 +688,7 @@ export class PathPromptModal extends Modal {
     });
     
     // 浏览按钮 - 优先用 Electron 原生对话框
-    const browseBtn = pathRow.createEl('button', { text: '浏览' });
-    browseBtn.style.boxShadow = 'none';
-    browseBtn.style.border = '0';
-    browseBtn.style.background = 'transparent';
-    browseBtn.style.padding = '8px 12px';
+    const browseBtn = pathRow.createEl('button', { text: '浏览', cls: 'btn-plain btn-browse' });
     browseBtn.addEventListener('click', async () => {
         // 尝试 Electron 原生对话框
         let selectedDir: string | null = null;
@@ -731,59 +713,51 @@ export class PathPromptModal extends Modal {
             await this.loadFiles();
         } else {
             // 降级: HTML webkitdirectory input
-            const fileInput = document.createElement('input');
+            const fileInput = document.createElement('input') as HTMLInputElementWithDirectory;
             fileInput.type = 'file';
             fileInput.setAttribute('webkitdirectory', '');
             fileInput.setAttribute('directory', '');
-            (fileInput as any).webkitdirectory = true;
-            fileInput.style.position = 'fixed';
-            fileInput.style.left = '-9999px';
-            fileInput.style.top = '-9999px';
-            fileInput.style.opacity = '0';
+            fileInput.webkitdirectory = true;
+            fileInput.addClass('file-input-hidden');
             document.body.appendChild(fileInput);
             
-            fileInput.onchange = async () => {
-                if (fileInput.files && fileInput.files.length > 0) {
-                    const f = fileInput.files[0];
-                    const sysPath = (f as FileWithPath).path;
-                    if (sysPath) {
-                        try {
-                            const relPath = (f as FileWithPath).webkitRelativePath;
-                            let dirPath: string;
-                            if (relPath && relPath.includes('/')) {
-                                let d = relPath.split('/').length - 1;
-                                dirPath = sysPath;
-                                while (d > 0) { dirPath = path.dirname(dirPath); d--; }
-                            } else {
-                                dirPath = path.dirname(sysPath);
+            fileInput.onchange = () => {
+                void (async () => {
+                    if (fileInput.files && fileInput.files.length > 0) {
+                        const f = fileInput.files[0];
+                        const sysPath = (f as FileWithPath).path;
+                        if (sysPath) {
+                            try {
+                                const relPath = (f as FileWithPath).webkitRelativePath;
+                                let dirPath: string;
+                                if (relPath && relPath.includes('/')) {
+                                    let d = relPath.split('/').length - 1;
+                                    dirPath = sysPath;
+                                    while (d > 0) { dirPath = path.dirname(dirPath); d--; }
+                                } else {
+                                    dirPath = path.dirname(sysPath);
+                                }
+                                this.currentFolderPath = dirPath;
+                                if (this.pathInputEl) this.pathInputEl.value = this.currentFolderPath;
+                                await this.loadFiles();
+                            } catch (err) {
+                                console.error('DualLink browse error:', err);
+                                new Notice('读取目录失败: ' + (err instanceof Error ? err.message : String(err)));
                             }
-                            this.currentFolderPath = dirPath;
-                            if (this.pathInputEl) this.pathInputEl.value = this.currentFolderPath;
-                            await this.loadFiles();
-                        } catch (err) {
-                            console.error('DualLink browse error:', err);
-                            new Notice('读取目录失败: ' + (err instanceof Error ? err.message : String(err)));
+                        } else {
+                            new Notice('无法获取系统路径，请手动输入。');
                         }
                     } else {
-                        new Notice('无法获取系统路径，请手动输入。');
+                        new Notice('所选目录为空或无法读取。');
                     }
-                } else {
-                    new Notice('所选目录为空或无法读取。');
-                }
-                fileInput.remove();
+                    fileInput.remove();
+                })();
             };
             fileInput.click();
         }
     });
 
-    const modeBtn = pathRow.createEl('button');
-    modeBtn.style.display = 'flex';
-    modeBtn.style.alignItems = 'center';
-    modeBtn.style.gap = '6px';
-    modeBtn.style.boxShadow = 'none';
-    modeBtn.style.border = '0';
-    modeBtn.style.background = 'transparent';
-    modeBtn.style.padding = '8px';
+    const modeBtn = pathRow.createEl('button', { cls: 'btn-plain btn-mode' });
     modeBtn.title = '在外部绝对路径与当前 Obsidian 库目录模式之间切换';
     
     const updateModeBtn = () => {
@@ -825,45 +799,29 @@ export class PathPromptModal extends Modal {
     });
 
     // 2. 搜索框与分类标签栏 - 移动端优化为垂直布局
-    const filterRow = topArea.createDiv();
-    filterRow.style.display = 'flex';
-    filterRow.style.flexDirection = isMobileDevice ? 'column' : 'row';
-    filterRow.style.gap = isMobileDevice ? '12px' : '20px';
-    filterRow.style.alignItems = isMobileDevice ? 'stretch' : 'center';
+    const filterRow = topArea.createDiv({ cls: isMobileDevice ? 'filter-row filter-row--mobile' : 'filter-row' });
     
-    const searchInput = filterRow.createEl('input', { type: 'text', placeholder: '搜索该目录下的文件...' });
-    searchInput.style.width = isMobileDevice ? '100%' : '250px';
-    searchInput.style.border = '0';
-    searchInput.style.boxShadow = 'none';
-    searchInput.style.minHeight = '40px';
+    const searchInput = filterRow.createEl('input', { 
+      type: 'text', 
+      placeholder: '搜索该目录下的文件...',
+      cls: isMobileDevice ? 'search-input search-input--mobile' : 'search-input'
+    });
     searchInput.addEventListener('input', (e) => {
         this.searchQuery = (e.target as HTMLInputElement).value.toLowerCase();
         this.renderFiles();
     });
     
     // 聚焦到文件搜索框中
-    setTimeout(() => {
+    window.setTimeout(() => {
         searchInput.focus();
     }, 50);
     
-    const tabsDiv = filterRow.createDiv();
-    tabsDiv.style.display = 'flex';
-    tabsDiv.style.gap = '8px';
-    tabsDiv.style.flex = '1';
-    tabsDiv.style.flexWrap = 'wrap';
+    const tabsDiv = filterRow.createDiv({ cls: 'tabs-wrapper' });
 
     // 2.5 多选模式与栏数控制
-    const galleryControls = filterRow.createDiv();
-    galleryControls.style.display = 'flex';
-    galleryControls.style.gap = '10px';
-    galleryControls.style.alignItems = 'center';
+    const galleryControls = filterRow.createDiv({ cls: 'gallery-controls' });
 
-    const insertGalleryBtn = galleryControls.createEl('button', { text: '插入多项' });
-    insertGalleryBtn.style.display = 'none';
-    insertGalleryBtn.style.border = '0';
-    insertGalleryBtn.style.boxShadow = 'none';
-    insertGalleryBtn.style.backgroundColor = 'var(--interactive-accent)';
-    insertGalleryBtn.style.color = 'var(--text-on-accent)';
+    const insertGalleryBtn = galleryControls.createEl('button', { text: '插入多项', cls: 'btn-insert-gallery' });
 
     insertGalleryBtn.addEventListener('click', () => {
         if (this.selectedFiles.size === 0) {
@@ -881,12 +839,12 @@ export class PathPromptModal extends Modal {
     
     this.updateInsertBtn = () => {
         if (this.selectedFiles.size > 0) {
-            insertGalleryBtn.style.display = 'block';
+            insertGalleryBtn.addClass('btn-insert-gallery--visible');
             const count = this.selectedFiles.size;
             const cols = count > 5 ? 5 : count;
             insertGalleryBtn.textContent = `插入 ${count} 张图 (分${cols}栏)`;
         } else {
-            insertGalleryBtn.style.display = 'none';
+            insertGalleryBtn.removeClass('btn-insert-gallery--visible');
         }
     };
 
@@ -918,20 +876,7 @@ export class PathPromptModal extends Modal {
     });
     
     // 内容显示区 - 移动端优化 (使用同一个 isMobileDevice 变量)
-    this.contentContainer = contentEl.createDiv();
-    this.contentContainer.style.flex = '1';
-    this.contentContainer.style.border = '0';
-    this.contentContainer.style.borderRadius = '8px';
-    this.contentContainer.style.padding = isMobileDevice ? '12px' : '16px';
-    this.contentContainer.style.overflowY = 'auto';
-    this.contentContainer.style.display = 'grid';
-    // 移动端用更紧凑的网格
-    this.contentContainer.style.gridTemplateColumns = isMobileDevice 
-      ? 'repeat(auto-fill, minmax(100px, 1fr))' 
-      : 'repeat(auto-fill, minmax(130px, 1fr))';
-    this.contentContainer.style.gap = isMobileDevice ? '12px' : '16px';
-    this.contentContainer.style.alignContent = 'start';
-    this.contentContainer.style.backgroundColor = 'var(--background-primary)';
+    this.contentContainer = contentEl.createDiv({ cls: 'content-container' });
 
     if (this.currentFolderPath) {
       await this.loadFiles();
@@ -986,11 +931,7 @@ export class PathPromptModal extends Modal {
 
   renderEmptyState(text: string) {
       this.contentContainer.empty();
-      const emptyMsg = this.contentContainer.createEl('div', { text });
-      emptyMsg.style.gridColumn = '1 / -1';
-      emptyMsg.style.textAlign = 'center';
-      emptyMsg.style.padding = '60px 20px';
-      emptyMsg.style.color = 'var(--text-muted)';
+      this.contentContainer.createEl('div', { text, cls: 'empty-msg' });
   }
 
   renderFiles() {
@@ -1027,46 +968,16 @@ export class PathPromptModal extends Modal {
       }
       
       filtered.forEach(file => {
-          const item = this.contentContainer.createDiv();
-          item.style.border = '0';
-          item.style.borderRadius = '8px';
-          item.style.padding = isMobileDevice ? '6px' : '8px';
-          item.style.display = 'flex';
-          item.style.flexDirection = 'column';
-          item.style.alignItems = 'center';
-          item.style.cursor = 'pointer';
-          item.style.backgroundColor = 'var(--background-secondary)';
-          item.style.transition = 'all 0.15s ease-in-out';
-          item.style.minHeight = isMobileDevice ? '120px' : 'auto';
-          
-          item.addEventListener('mouseenter', () => {
-              item.style.transform = 'translateY(-2px)';
-              item.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-          });
-          item.addEventListener('mouseleave', () => {
-              item.style.transform = 'none';
-              item.style.boxShadow = 'none';
-          });
+          const item = this.contentContainer.createDiv({ cls: isMobileDevice ? 'file-item file-item--mobile' : 'file-item' });
           
           // Icon or Preview - 移动端调整预览尺寸
-          const previewDiv = item.createDiv();
-          previewDiv.style.height = isMobileDevice ? '70px' : '90px';
-          previewDiv.style.width = '100%';
-          previewDiv.style.display = 'flex';
-          previewDiv.style.justifyContent = 'center';
-          previewDiv.style.alignItems = 'center';
-          previewDiv.style.marginBottom = '8px';
-          previewDiv.style.borderRadius = '4px';
-          previewDiv.style.overflow = 'hidden';
-          previewDiv.style.backgroundColor = 'var(--background-primary)';
+          const previewDiv = item.createDiv({ cls: isMobileDevice ? 'preview-div preview-div--mobile' : 'preview-div' });
           
           const imageCheck = !file.isDirectory && isImageExt(file.ext);
           const videoCheck = !file.isDirectory && isVideoExt(file.ext);
 
           if (file.isDirectory) {
-              const icon = previewDiv.createEl('div', { text: '📁' });
-              icon.style.fontSize = '40px';
-              icon.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))';
+              previewDiv.createEl('div', { text: '📁', cls: 'file-icon' });
           } else if (imageCheck || videoCheck) {
               try {
                   const buf = fs.readFileSync(file.path);
@@ -1080,51 +991,31 @@ export class PathPromptModal extends Modal {
                   const blob = new Blob([buf], { type: mime });
                   const blobUrl = URL.createObjectURL(blob);
                   if (imageCheck) {
-                      const img = previewDiv.createEl('img');
+                      const img = previewDiv.createEl('img', { cls: 'preview-image' });
                       img.src = blobUrl;
-                      img.style.maxWidth = '100%';
-                      img.style.maxHeight = '100%';
-                      img.style.objectFit = 'contain';
                   } else {
-                      const video = previewDiv.createEl('video');
+                      const video = previewDiv.createEl('video', { cls: 'preview-video' });
                       video.src = blobUrl;
-                      video.style.maxWidth = '100%';
-                      video.style.maxHeight = '100%';
-                      video.style.objectFit = 'contain';
                       video.muted = true;
                       video.autoplay = true;
                       video.loop = true;
-                      video.style.pointerEvents = 'none';
                   }
-              } catch (err) {
-                  const icon = previewDiv.createEl('div', { text: file.ext ? file.ext.toUpperCase() : '?' });
-                  icon.style.fontSize = '20px';
-                  icon.style.fontWeight = 'bold';
-                  icon.style.color = 'var(--text-muted)';
+              } catch {
+                  previewDiv.createEl('div', { text: file.ext ? file.ext.toUpperCase() : '?', cls: 'file-type-badge' });
               }
           } else {
-              const icon = previewDiv.createEl('div', { text: file.ext ? file.ext.toUpperCase() : '?' });
-              icon.style.fontSize = '20px';
-              icon.style.fontWeight = 'bold';
-              icon.style.color = 'var(--text-muted)';
+              previewDiv.createEl('div', { text: file.ext ? file.ext.toUpperCase() : '?', cls: 'file-type-badge' });
           }
           
-          const nameSpan = item.createEl('div', { text: file.name });
-          nameSpan.style.fontSize = isMobileDevice ? '11px' : '12px';
-          nameSpan.style.textAlign = 'center';
-          nameSpan.style.wordBreak = 'break-all';
-          nameSpan.style.display = '-webkit-box';
-          (nameSpan.style as CSSStyleDeclaration).webkitLineClamp = '2';
-          (nameSpan.style as CSSStyleDeclaration).webkitBoxOrient = 'vertical';
-          nameSpan.style.overflow = 'hidden';
-          nameSpan.style.width = '100%';
+          const nameSpan = item.createEl('div', { 
+            text: file.name, 
+            cls: isMobileDevice ? 'file-name file-name--mobile' : 'file-name' 
+          });
           nameSpan.title = file.name;
           
           let isSelected = Array.from(this.selectedFiles).some((f: FileItem) => f.path === file.path);
           if (isSelected) {
-              item.style.borderColor = 'var(--interactive-accent)';
-              item.style.backgroundColor = 'rgba(var(--interactive-accent-rgb, 136, 57, 239), 0.15)';
-              item.style.boxShadow = '0 0 0 2px var(--interactive-accent)';
+              item.addClass('file-item--selected');
           }
 
           item.addEventListener('click', async (e) => {
@@ -1174,5 +1065,7 @@ export class PathPromptModal extends Modal {
     contentEl.empty();
   }
 }
+
+/* eslint-enable @typescript-eslint/no-unsafe-member-access */
 
 

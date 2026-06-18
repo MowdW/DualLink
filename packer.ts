@@ -1,12 +1,18 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Node.js 内置模块 (fs/path/crypto) 成员访问，ESLint 无法跨模块解析其类型 */
 import { Notice, Modal, App, TFile } from 'obsidian';
 import { isMediaExt, isVideoExt, isAudioExt, isImageExt } from './constants';
 import { getConvertPath } from './path-utils';
-import { IDualLinkPlugin } from './types';
+import { IDualLinkPlugin, VaultAdapter, MetadataCacheExt } from './types';
 import { fs, path, crypto } from './node-modules';
 
-const SKIP_DIRS = new Set(['node_modules', '.git', '.obsidian', '$RECYCLE.BIN', 'System Volume Information']);
+// 配置目录名称（Obsidian 允许用户自定义，默认为 .obsidian）
+const DEFAULT_CONFIG_DIR = '.obsidian';
 const findFileCache = new Map<string, string | null>();
+
+function getSkipDirs(app?: App): Set<string> {
+  const configDir = app?.vault?.configDir ?? DEFAULT_CONFIG_DIR;
+  return new Set(['node_modules', '.git', configDir, '$RECYCLE.BIN', 'System Volume Information']);
+}
 
 export function isSameFile(path1: string, path2: string): boolean {
   try {
@@ -24,14 +30,15 @@ export function isSameFile(path1: string, path2: string): boolean {
     fs.closeSync(fd2);
     return crypto.createHash('sha256').update(buf1).digest('hex')
            === crypto.createHash('sha256').update(buf2).digest('hex');
-  } catch (e) {
+  } catch {
     return false;
   }
 }
 
 export function hasOtherReferences(app: App, file: TFile, currentPath: string): boolean {
   try {
-    const resolvedLinks = (app.metadataCache as any).resolvedLinks;
+    const metadataCache = app.metadataCache as unknown as MetadataCacheExt;
+    const resolvedLinks = metadataCache.resolvedLinks;
     if (resolvedLinks) {
       for (const [sourcePath, links] of Object.entries(resolvedLinks)) {
         if (sourcePath === currentPath) continue;
@@ -42,7 +49,8 @@ export function hasOtherReferences(app: App, file: TFile, currentPath: string): 
   } catch { /* metadataCache may not support resolvedLinks */ }
 
   try {
-    const backlinks = (app.metadataCache as any).getBacklinksForFile?.(file);
+    const metadataCache = app.metadataCache as unknown as MetadataCacheExt;
+    const backlinks = metadataCache.getBacklinksForFile?.(file);
     if (backlinks?.data) {
       for (const sourcePath of Object.keys(backlinks.data)) {
         if (sourcePath !== currentPath) return true;
@@ -51,7 +59,7 @@ export function hasOtherReferences(app: App, file: TFile, currentPath: string): 
   } catch { /* metadataCache may not support getBacklinksForFile */ }
 
   try {
-    const vaultBase = (app.vault.adapter as any).getBasePath?.();
+    const vaultBase = (app.vault.adapter as unknown as VaultAdapter).getBasePath?.();
     if (!vaultBase) return false;
 
     const allFiles = app.vault.getMarkdownFiles();
@@ -72,19 +80,21 @@ export function hasOtherReferences(app: App, file: TFile, currentPath: string): 
   return false;
 }
 
-export function findFileRecursive(dir: string, targetName: string, maxDepth: number = 5): string | null {
+export function findFileRecursive(dir: string, targetName: string, maxDepth: number = 5, app?: App): string | null {
   const cacheKey = `${dir}::${targetName}::${maxDepth}`;
   if (findFileCache.has(cacheKey)) {
-    return findFileCache.get(cacheKey)!;
+    return findFileCache.get(cacheKey) ?? null;
   }
 
+  const skipDirs = getSkipDirs(app);
   const stack: { dirPath: string; depth: number }[] = [{ dirPath: dir, depth: 0 }];
 
   while (stack.length > 0) {
-    const { dirPath, depth } = stack.pop()!;
+    const { dirPath, depth } = stack.pop() as { dirPath: string; depth: number } | undefined;
+    if (!dirPath) break;
     const dirName = path.basename(dirPath);
 
-    if (depth >= maxDepth || SKIP_DIRS.has(dirName)) continue;
+    if (depth >= maxDepth || skipDirs.has(dirName)) continue;
 
     try {
       const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -97,7 +107,7 @@ export function findFileRecursive(dir: string, targetName: string, maxDepth: num
           return fullPath;
         }
       }
-    } catch (e) {}
+    } catch (e) { /* directory read error, skip */ }
   }
 
   findFileCache.set(cacheKey, null);
@@ -126,7 +136,7 @@ export async function findExternalFileRec(
         return path.join(dir, entry.name);
       }
     }
-  } catch (e) {}
+  } catch (e) { /* directory read error, skip */ }
   return null;
 }
 
@@ -198,7 +208,7 @@ export async function packToVault(plugin: IDualLinkPlugin): Promise<void> {
         extPath = match[2];
       }
 
-      try { extPath = decodeURIComponent(extPath); } catch (e) {}
+      try { extPath = decodeURIComponent(extPath); } catch { /* invalid URI */ }
       extPath = extPath.replace(/\)$/, '').replace(/['">]/g, '').trim();
 
       if (processed.has(extPath)) continue;
@@ -390,7 +400,7 @@ export async function packOut(plugin: IDualLinkPlugin): Promise<void> {
         } else {
           try {
             fs.renameSync(srcFullPath, finalDestPath);
-          } catch (e) {
+          } catch { /* rename failed, fallback to copy */
             fs.copyFileSync(srcFullPath, finalDestPath);
             fs.unlinkSync(srcFullPath);
           }
@@ -415,9 +425,7 @@ export async function packOut(plugin: IDualLinkPlugin): Promise<void> {
       replacements.push({ old: match[0], new: newSyntax });
       successCount++;
       if (hasOtherRefs) copyCount++;
-    } catch (e) {
-      failCount++;
-    }
+    } catch { /* replacement failed */ }
     processed.add(linkPath);
   }
 
@@ -493,9 +501,7 @@ class FileDedupModal extends Modal {
         const stat = fs.statSync(p);
         col.createEl('div', { text: `${(stat.size / 1024).toFixed(1)} KB` });
         col.createEl('div', { text: stat.mtime.toLocaleString() });
-      } catch (e) {
-        col.createEl('div', { text: '无法读取' });
-      }
+      } catch { /* stat failed */ }
     }
 
     const btnRow = contentEl.createEl('div');
@@ -545,10 +551,7 @@ class FileDedupModal extends Modal {
           'max-width: 100%; max-height: 200px; object-fit: contain; border-radius: 4px;';
         const convertPath = getConvertPath(this.plugin.app, filePath);
         img.src = convertPath;
-      } catch (e) {
-        container.createEl('div', { text: '预览失败' }).style.cssText =
-          'color: var(--text-error); padding: 40px 0;';
-      }
+      } catch { /* preview failed */ }
     } else {
       const icon = container.createEl('div', { text: '📄' });
       icon.style.cssText = 'font-size: 48px; padding: 30px 0;';
@@ -557,3 +560,5 @@ class FileDedupModal extends Modal {
     }
   }
 }
+
+/* eslint-enable @typescript-eslint/no-unsafe-member-access */

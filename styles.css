@@ -53,17 +53,101 @@
 .dual-link-modal {
   width: 80vw;
   max-width: 1000px;
-  height: 80vh;
+  max-height: 80vh;
+  min-height: 40vh;
+  height: auto;
   display: flex;
   flex-direction: column;
+}
+/* 移动端样式 - 需要 !important 覆盖 Obsidian modal 的内联样式 */
+.dual-link-modal--mobile {
+  width: 100% !important;
+  max-width: none !important;
+  min-height: 60vh !important;
+}
+
+.dual-link-modal .content-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
 }
 
 .dual-link-modal .top-area {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   flex-shrink: 0;
+}
+
+.dual-link-modal .btn-plain {
+  box-shadow: none;
+  border: 0;
+  background: transparent;
+}
+
+.dual-link-modal .btn-browse {
+  padding: 8px 12px;
+}
+
+.dual-link-modal .btn-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+}
+
+.dual-link-modal .filter-row {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+.dual-link-modal .filter-row--mobile {
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.dual-link-modal .search-input {
+  width: 250px;
+  border: 0;
+  box-shadow: none;
+  min-height: 40px;
+}
+.dual-link-modal .search-input--mobile {
+  width: 100%;
+}
+
+.dual-link-modal .tabs-wrapper {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.dual-link-modal .gallery-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.dual-link-modal .btn-insert-gallery {
+  display: none;
+  border: 0;
+  box-shadow: none;
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.dual-link-modal .btn-insert-gallery--visible {
+  display: inline-flex;
+}
+
+.dual-link-modal .file-input-hidden {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  opacity: 0;
 }
 
 .dual-link-modal .path-row {
@@ -194,6 +278,35 @@
   pointer-events: none;
 }
 
+.dual-link-modal .file-item--mobile {
+  padding: 6px;
+  min-height: 120px;
+}
+
+.dual-link-modal .preview-div--mobile {
+  height: 70px;
+}
+
+.dual-link-modal .file-name {
+  font-size: 12px;
+  text-align: center;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  width: 100%;
+}
+.dual-link-modal .file-name--mobile {
+  font-size: 11px;
+}
+
+.dual-link-modal .file-item--selected {
+  border-color: var(--interactive-accent);
+  background-color: rgba(var(--interactive-accent-rgb, 136, 57, 239), 0.15);
+  box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+
 .dual-link-modal .file-type-badge {
   font-size: 20px;
   font-weight: bold;
@@ -288,6 +401,10 @@
   font-size: 14px;
   text-shadow: 0 1px 2px rgba(0,0,0,0.8);
 }
+.duallink-gallery-item-btn--visible {
+  opacity: 1;
+}
+/* 按钮 hover 样式 - 需要 !important 覆盖 Obsidian 按钮默认样式 */
 .duallink-gallery-item-btn:hover {
   color: var(--interactive-accent) !important;
 }
@@ -337,6 +454,9 @@
 }
 .duallink-gallery-col-ctrl--right {
   right: 4px;
+}
+.duallink-gallery-control--visible {
+  opacity: 1;
 }
 
 .duallink-gallery-col-btn {
@@ -388,6 +508,18 @@
   border: none;
   outline: 2px dashed var(--interactive-accent);
 }
+.duallink-gallery-item--normal-border {
+  border: 1px solid var(--background-modifier-border);
+}
+.duallink-gallery-item--no-border {
+  border: none;
+}
+.duallink-gallery-item--no-outline {
+  outline: none;
+}
+.duallink-gallery-item--scaled {
+  transform: scale(1.02);
+}
 
 /* --- Gallery 媒体元素 --- */
 .duallink-gallery-media {
@@ -409,6 +541,29 @@
   border-radius: 8px;
 }
 
+/* --- Gallery 媒体元素样式 --- */
+.duallink-gallery-media-full-width {
+  width: 100%;
+  display: block;
+  margin: 0;
+}
+.duallink-gallery-media-cover {
+  height: 100%;
+  object-fit: cover;
+  border-radius: 0;
+}
+.duallink-gallery-media-audio {
+  height: 54px;
+  border-radius: 8px;
+}
+.duallink-gallery-media-img {
+  pointer-events: none;
+}
+.duallink-gallery-p-margin-reset {
+  margin: 0;
+  padding: 0;
+}
+
 /* --- Gallery 空位占位 --- */
 .duallink-gallery-empty {
   border-radius: 8px;
@@ -425,6 +580,10 @@
   border-color: var(--interactive-accent);
   color: var(--interactive-accent);
   transform: scale(1.02);
+}
+.duallink-gallery-empty--loading span {
+  font-size: 12px;
+  color: var(--interactive-accent);
 }
 
 /* --- Gallery 加载占位 --- */
@@ -483,6 +642,7 @@
 
 /* --- Gallery 内媒体二次渲染修正 --- */
 .duallink-gallery-item .internal-embed[src*=".mp3"],
+/* 音频嵌入样式 - 需要 !important 覆盖 Obsidian embed 默认样式 */
 .duallink-gallery-item .internal-embed[src*=".wav"],
 .duallink-gallery-item .internal-embed[src*=".ogg"],
 .duallink-gallery-item .internal-embed[src*=".m4a"],
@@ -491,6 +651,7 @@
   display: block !important;
 }
 
+/* Gallery 代码块容器 - 需要 !important 覆盖 Obsidian 代码块样式 */
 .markdown-source-view.mod-cm6 .cm-embed-block:has(.duallink-gallery-container),
 .markdown-source-view.mod-cm6 .cm-preview-code-block:has(.duallink-gallery-container) {
     border: 0 !important;
@@ -503,6 +664,7 @@
     box-shadow: none !important;
 }
 
+/* 阅读视图隐藏按钮 - 需要 !important 覆盖 Obsidian 按钮样式 */
 .markdown-reading-view .duallink-gallery-add-btn,
 .markdown-reading-view .duallink-gallery-sub-btn,
 .markdown-reading-view .duallink-gallery-plus-btn {
@@ -510,6 +672,7 @@
 }
 
 /* ================= 响应式样式 - 移动端适配 ================= */
+/* 移动端样式 - 需要 !important 覆盖 Obsidian modal 的内联样式 */
 @media (max-width: 768px) {
   /* 预览弹窗样式 - 移动端 */
   .local-preview-popover {
@@ -517,7 +680,7 @@
     padding: 10px;
   }
   
-  /* 文件浏览器模态框 - 移动端 */
+  /* 文件浏览器模态框 - 移动端 - 需要 !important */
   .dual-link-modal {
     width: 100% !important;
     max-width: none !important;
@@ -599,7 +762,7 @@
   }
 }
 
-/* 超小屏幕优化 */
+/* 超小屏幕优化 - 需要 !important 覆盖 Obsidian popover 样式 */
 @media (max-width: 480px) {
   .local-preview-popover {
     width: 90vw;
