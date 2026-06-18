@@ -1,6 +1,0 @@
-{
-  "name": "Obsidian DualLink",
-  "description": "An interactive workspace demonstrating the custom Obsidian plugin for adding local files, auto-generating markdown links, rapid jumping, and instant live preview.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
