@@ -857,27 +857,20 @@ export class PathPromptModal extends Modal {
         { id: 'audio', label: '音频' }
     ];
     
-    /* eslint-disable obsidianmd/no-static-styles-assignment -- Tab高亮通过Obsidian CSS变量动态切换 */
     tabs.forEach(tab => {
-        const tabEl = tabsDiv.createEl('button', { text: tab.label });
-        tabEl.style.boxShadow = 'none';
-        tabEl.style.border = '0';
+        const tabEl = tabsDiv.createEl('button', { text: tab.label, cls: 'duallink-tab-btn' });
         if (this.currentTab === tab.id) {
-            tabEl.style.backgroundColor = 'var(--interactive-accent)';
-            tabEl.style.color = 'var(--text-on-accent)';
+            tabEl.addClass('duallink-tab-btn--active');
         }
         tabEl.addEventListener('click', () => {
             this.currentTab = tab.id as typeof this.currentTab;
             Array.from(tabsDiv.children).forEach((child: HTMLElement) => {
-                child.style.backgroundColor = '';
-                child.style.color = '';
+                child.removeClass('duallink-tab-btn--active');
             });
-            tabEl.style.backgroundColor = 'var(--interactive-accent)';
-            tabEl.style.color = 'var(--text-on-accent)';
+            tabEl.addClass('duallink-tab-btn--active');
             this.renderFiles();
         });
     });
-    /* eslint-enable obsidianmd/no-static-styles-assignment */
     
     // 内容显示区 - 移动端优化 (使用同一个 isMobileDevice 变量)
     this.contentContainer = contentEl.createDiv({ cls: 'content-container' });
@@ -1036,16 +1029,11 @@ export class PathPromptModal extends Modal {
                           const toRemove = Array.from(this.selectedFiles).find((f: FileItem) => f.path === file.path);
                           this.selectedFiles.delete(toRemove);
                           isSelected = false;
-                          /* eslint-disable-next-line obsidianmd/no-static-styles-assignment -- 多选状态通过CSS变量动态切换 */
-                          item.style.borderColor = 'var(--background-modifier-border)';
-                          item.style.backgroundColor = 'var(--background-secondary)';
-                          item.style.boxShadow = 'none';
+                          item.removeClass('file-item--selected');
                       } else {
                           this.selectedFiles.add(file);
                           isSelected = true;
-                          item.style.borderColor = 'var(--interactive-accent)';
-                          item.style.backgroundColor = 'rgba(var(--interactive-accent-rgb, 136, 57, 239), 0.15)';
-                          item.style.boxShadow = '0 0 0 2px var(--interactive-accent)';
+                          item.addClass('file-item--selected');
                       }
                       this.isMultiSelectMode = this.selectedFiles.size > 0;
                       if (this.updateInsertBtn) this.updateInsertBtn();

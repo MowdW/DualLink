@@ -17,11 +17,11 @@ interface ElectronShell {
 export const electron: { shell: ElectronShell } | null = isDesktop()
   ? (() => { try { return require('electron') as { shell: ElectronShell }; } catch { return null; } })()
   : null;
-/* eslint-enable @typescript-eslint/no-unsafe-return */
+/* eslint-enable @typescript-eslint/no-unsafe-return -- 恢复 no-unsafe-return 检查 */
 
 /* eslint-disable @typescript-eslint/no-var-requires -- Node.js 内置模块必须使用 require() */
 export const fs: typeof import('fs') = require('fs');
 export const path: typeof import('path') = require('path');
 export const crypto: typeof import('crypto') = require('crypto');
-/* eslint-enable @typescript-eslint/no-var-requires */
+/* eslint-enable @typescript-eslint/no-var-requires -- 恢复 no-var-requires 检查 */
 /* eslint-enable -- 恢复所有被禁用的 ESLint 规则 */

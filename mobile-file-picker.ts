@@ -1,8 +1,6 @@
-import { Modal, App, Notice, setIcon, TFile, MarkdownView, Editor } from 'obsidian';
+import { Modal, Notice, TFile, MarkdownView, Editor } from 'obsidian';
 import { isImageExt, isVideoExt, isAudioExt, isMediaExt } from './constants';
 import { IDualLinkPlugin } from './types';
-
-/* eslint-disable obsidianmd/no-static-styles-assignment -- 移动端模态窗布局复杂，使用CSS变量动态计算尺寸 */
 
 export class MobileFilePickerModal extends Modal {
   private plugin: IDualLinkPlugin;
@@ -26,40 +24,22 @@ export class MobileFilePickerModal extends Modal {
     this.allFiles = this.app.vault.getFiles();
 
     const isMobileDevice = window.innerWidth < 768;
-    this.modalEl.style.width = isMobileDevice ? '100%' : '80vw';
-    this.modalEl.style.maxWidth = isMobileDevice ? 'none' : '800px';
-    this.modalEl.style.maxHeight = '85vh';
-    this.modalEl.style.height = 'auto';
-    this.modalEl.style.display = 'flex';
-    this.modalEl.style.flexDirection = 'column';
+    this.modalEl.addClass('mobile-file-picker-modal');
+    this.modalEl.addClass(isMobileDevice ? 'mobile-file-picker-modal--mobile' : 'mobile-file-picker-modal--desktop');
 
-    contentEl.style.display = 'flex';
-    contentEl.style.flexDirection = 'column';
-    contentEl.style.flex = '1';
-    contentEl.style.overflow = 'hidden';
-    contentEl.style.padding = '12px';
+    contentEl.addClass('mobile-file-picker-content');
 
     // 标题
-    const titleEl = contentEl.createEl('h3', { text: '选择保险库中的文件' });
-    titleEl.style.margin = '0 0 10px 0';
-    titleEl.style.fontSize = '15px';
+    const titleEl = contentEl.createEl('h3', { text: '选择保险库中的文件', cls: 'mobile-file-picker-title' });
 
     // 搜索框
-    const searchRow = contentEl.createDiv();
-    searchRow.style.display = 'flex';
-    searchRow.style.gap = '10px';
-    searchRow.style.marginBottom = '10px';
+    const searchRow = contentEl.createDiv({ cls: 'mobile-file-picker-search-row' });
 
     const searchInput = searchRow.createEl('input', {
       type: 'text',
       placeholder: '搜索文件名...',
+      cls: 'mobile-file-picker-search-input',
     });
-    searchInput.style.flex = '1';
-    searchInput.style.padding = '8px 12px';
-    searchInput.style.borderRadius = '6px';
-    searchInput.style.border = '1px solid var(--background-modifier-border)';
-    searchInput.style.backgroundColor = 'var(--background-primary)';
-    searchInput.style.minHeight = '40px';
     searchInput.addEventListener('input', () => {
       this.searchQuery = searchInput.value.toLowerCase();
       this.renderFiles();
@@ -68,11 +48,7 @@ export class MobileFilePickerModal extends Modal {
     setTimeout(() => searchInput.focus(), 100);
 
     // 标签栏
-    const tabsRow = contentEl.createDiv();
-    tabsRow.style.display = 'flex';
-    tabsRow.style.gap = '6px';
-    tabsRow.style.marginBottom = '12px';
-    tabsRow.style.flexWrap = 'wrap';
+    const tabsRow = contentEl.createDiv({ cls: 'mobile-file-picker-tabs-row' });
 
     const tabs = [
       { id: 'all', label: '全部' },
@@ -83,39 +59,24 @@ export class MobileFilePickerModal extends Modal {
     ] as const;
 
     tabs.forEach((tab) => {
-      const tabEl = tabsRow.createEl('button', { text: tab.label });
-      tabEl.style.padding = '6px 14px';
-      tabEl.style.borderRadius = '16px';
-      tabEl.style.border = '1px solid var(--background-modifier-border)';
-      tabEl.style.backgroundColor = 'transparent';
-      tabEl.style.fontSize = '12px';
-      tabEl.style.cursor = 'pointer';
+      const tabEl = tabsRow.createEl('button', { text: tab.label, cls: 'mobile-file-picker-tab-btn' });
 
       if (this.currentTab === tab.id) {
-        tabEl.style.backgroundColor = 'var(--interactive-accent)';
-        tabEl.style.color = 'var(--text-on-accent)';
-        tabEl.style.borderColor = 'var(--interactive-accent)';
+        tabEl.addClass('mobile-file-picker-tab-btn--active');
       }
 
       tabEl.addEventListener('click', () => {
         this.currentTab = tab.id;
         Array.from(tabsRow.children).forEach((child: HTMLElement) => {
-          child.style.backgroundColor = 'transparent';
-          child.style.color = '';
-          child.style.borderColor = 'var(--background-modifier-border)';
+          child.removeClass('mobile-file-picker-tab-btn--active');
         });
-        tabEl.style.backgroundColor = 'var(--interactive-accent)';
-        tabEl.style.color = 'var(--text-on-accent)';
-        tabEl.style.borderColor = 'var(--interactive-accent)';
+        tabEl.addClass('mobile-file-picker-tab-btn--active');
         this.renderFiles();
       });
     });
 
     // 文件列表容器
-    this.contentContainer = contentEl.createDiv();
-    this.contentContainer.style.flex = '1';
-    this.contentContainer.style.overflowY = 'auto';
-    this.contentContainer.style.padding = '4px 0';
+    this.contentContainer = contentEl.createDiv({ cls: 'mobile-file-picker-file-container' });
 
     this.renderFiles();
   }
@@ -146,22 +107,16 @@ export class MobileFilePickerModal extends Modal {
     if (filtered.length === 0) {
       const empty = this.contentContainer.createEl('div', {
         text: '没有找到匹配的文件',
+        cls: 'mobile-file-picker-empty',
       });
-      empty.style.textAlign = 'center';
-      empty.style.padding = '40px 20px';
-      empty.style.color = 'var(--text-muted)';
-      empty.style.fontSize = '14px';
       return;
     }
 
     // 显示结果计数
     const countEl = this.contentContainer.createEl('div', {
       text: `共 ${filtered.length} 个文件`,
+      cls: 'mobile-file-picker-count',
     });
-    countEl.style.fontSize = '11px';
-    countEl.style.color = 'var(--text-muted)';
-    countEl.style.marginBottom = '8px';
-    countEl.style.paddingLeft = '4px';
 
     filtered.forEach((file) => {
       void this.renderFileItem(file);
@@ -173,35 +128,10 @@ export class MobileFilePickerModal extends Modal {
     const ext = file.extension.toLowerCase();
     const isMedia = isMediaExt(ext);
 
-    const item = this.contentContainer.createDiv();
-    item.style.display = 'flex';
-    item.style.alignItems = 'center';
-    item.style.gap = '12px';
-    item.style.padding = isMobileDevice ? '10px 8px' : '8px 12px';
-    item.style.borderRadius = '8px';
-    item.style.cursor = 'pointer';
-    item.style.marginBottom = '4px';
-    item.style.backgroundColor = 'var(--background-secondary)';
-    item.style.transition = 'background-color 0.15s';
-
-    item.addEventListener('mouseenter', () => {
-      item.style.backgroundColor = 'var(--background-modifier-hover)';
-    });
-    item.addEventListener('mouseleave', () => {
-      item.style.backgroundColor = 'var(--background-secondary)';
-    });
+    const item = this.contentContainer.createDiv({ cls: isMobileDevice ? 'mobile-file-picker-item mobile-file-picker-item--mobile' : 'mobile-file-picker-item' });
 
     // 缩略图或图标
-    const iconDiv = item.createDiv();
-    iconDiv.style.width = isMobileDevice ? '48px' : '56px';
-    iconDiv.style.height = isMobileDevice ? '48px' : '56px';
-    iconDiv.style.flexShrink = '0';
-    iconDiv.style.borderRadius = '6px';
-    iconDiv.style.overflow = 'hidden';
-    iconDiv.style.display = 'flex';
-    iconDiv.style.alignItems = 'center';
-    iconDiv.style.justifyContent = 'center';
-    iconDiv.style.backgroundColor = 'var(--background-primary)';
+    const iconDiv = item.createDiv({ cls: isMobileDevice ? 'mobile-file-picker-icon mobile-file-picker-icon--mobile' : 'mobile-file-picker-icon' });
 
     // 尝试加载媒体预览
     let previewLoaded = false;
@@ -219,22 +149,15 @@ export class MobileFilePickerModal extends Modal {
         const blobUrl = URL.createObjectURL(blob);
 
         if (isImageExt(ext)) {
-          const img = iconDiv.createEl('img');
+          const img = iconDiv.createEl('img', { cls: 'mobile-file-picker-media-preview' });
           img.src = blobUrl;
-          img.style.width = '100%';
-          img.style.height = '100%';
-          img.style.objectFit = 'cover';
           previewLoaded = true;
         } else {
-          const video = iconDiv.createEl('video');
+          const video = iconDiv.createEl('video', { cls: 'mobile-file-picker-media-preview mobile-file-picker-media-preview--video' });
           video.src = blobUrl;
-          video.style.width = '100%';
-          video.style.height = '100%';
-          video.style.objectFit = 'cover';
           video.muted = true;
           video.autoplay = true;
           video.loop = true;
-          video.style.pointerEvents = 'none';
           previewLoaded = true;
         }
       } catch { /* preview failed */ }
@@ -248,31 +171,17 @@ export class MobileFilePickerModal extends Modal {
       else if (isAudioExt(ext)) iconText = '🎵';
       else if (ext === 'md') iconText = '📝';
 
-      const icon = iconDiv.createEl('span', { text: iconText });
-      icon.style.fontSize = isMobileDevice ? '22px' : '26px';
+      const icon = iconDiv.createEl('span', { text: iconText, cls: isMobileDevice ? 'mobile-file-picker-file-icon mobile-file-picker-file-icon--mobile' : 'mobile-file-picker-file-icon' });
     }
 
     // 文件信息
-    const infoDiv = item.createDiv();
-    infoDiv.style.flex = '1';
-    infoDiv.style.minWidth = '0';
+    const infoDiv = item.createDiv({ cls: 'mobile-file-picker-info' });
 
-    const nameEl = infoDiv.createEl('div', { text: file.name });
-    nameEl.style.fontSize = '13px';
-    nameEl.style.fontWeight = '500';
-    nameEl.style.overflow = 'hidden';
-    nameEl.style.textOverflow = 'ellipsis';
-    nameEl.style.whiteSpace = 'nowrap';
+    const nameEl = infoDiv.createEl('div', { text: file.name, cls: 'mobile-file-picker-name' });
 
     // 路径
     const dirPath = file.parent?.path || '';
-    const pathEl = infoDiv.createEl('div', { text: dirPath || '根目录' });
-    pathEl.style.fontSize = '10px';
-    pathEl.style.color = 'var(--text-muted)';
-    pathEl.style.overflow = 'hidden';
-    pathEl.style.textOverflow = 'ellipsis';
-    pathEl.style.whiteSpace = 'nowrap';
-    pathEl.style.marginTop = '2px';
+    const pathEl = infoDiv.createEl('div', { text: dirPath || '根目录', cls: 'mobile-file-picker-path' });
 
     // 点击事件 - 插入链接到编辑器
     item.addEventListener('click', () => {
@@ -306,4 +215,3 @@ export class MobileFilePickerModal extends Modal {
     this.contentEl.empty();
   }
 }
-/* eslint-enable obsidianmd/no-static-styles-assignment */

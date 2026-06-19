@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, obsidianmd/no-static-styles-assignment -- Node.js内置模块成员访问 + 模态窗布局使用Obsidian CSS变量动态样式 */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Node.js内置模块成员访问 */
 import { Notice, Modal, App, TFile } from 'obsidian';
 import { isMediaExt, isVideoExt, isAudioExt, isImageExt } from './constants';
 import { getConvertPath } from './path-utils';
@@ -467,36 +467,24 @@ class FileDedupModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.style.cssText = 'padding: 20px; max-width: 700px;';
+    contentEl.addClass('duallink-dedup-content');
 
     contentEl.createEl('h3', { text: '发现同名文件' });
-    contentEl.createEl('p', { text: '保险库中已存在同名文件，请确认是否与此文件相同：' }).style.cssText =
-      'color: var(--text-muted); margin-bottom: 16px;';
+    contentEl.createEl('p', { text: '保险库中已存在同名文件，请确认是否与此文件相同：', cls: 'duallink-dedup-desc' });
 
-    const previewRow = contentEl.createEl('div');
-    previewRow.style.cssText = 'display: flex; gap: 16px; margin: 0 0 16px 0;';
+    const previewRow = contentEl.createEl('div', { cls: 'duallink-dedup-preview-row' });
 
-    const leftCol = previewRow.createEl('div');
-    leftCol.style.cssText =
-      'flex: 1; text-align: center; border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 12px;';
-    leftCol.createEl('div', { text: '保险库已有' }).style.cssText =
-      'font-weight: 600; margin-bottom: 8px; font-size: 13px;';
+    const leftCol = previewRow.createEl('div', { cls: 'duallink-dedup-preview-col' });
+    leftCol.createEl('div', { text: '保险库已有', cls: 'duallink-dedup-preview-title' });
     this.renderFilePreview(leftCol, this.existingPath);
 
-    const rightCol = previewRow.createEl('div');
-    rightCol.style.cssText =
-      'flex: 1; text-align: center; border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 12px;';
-    rightCol.createEl('div', { text: '即将导入' }).style.cssText =
-      'font-weight: 600; margin-bottom: 8px; font-size: 13px;';
+    const rightCol = previewRow.createEl('div', { cls: 'duallink-dedup-preview-col' });
+    rightCol.createEl('div', { text: '即将导入', cls: 'duallink-dedup-preview-title' });
     this.renderFilePreview(rightCol, this.newPath);
 
-    const infoRow = contentEl.createEl('div');
-    infoRow.style.cssText =
-      'display: flex; gap: 16px; font-size: 11px; color: var(--text-muted); margin-bottom: 20px;';
+    const infoRow = contentEl.createEl('div', { cls: 'duallink-dedup-info-row' });
     for (const p of [this.existingPath, this.newPath]) {
-      const col = infoRow.createEl('div');
-      col.style.flex = '1';
-      col.style.textAlign = 'center';
+      const col = infoRow.createEl('div', { cls: 'duallink-dedup-info-col' });
       try {
         const stat = fs.statSync(p);
         col.createEl('div', { text: `${(stat.size / 1024).toFixed(1)} KB` });
@@ -504,22 +492,17 @@ class FileDedupModal extends Modal {
       } catch { /* stat failed */ }
     }
 
-    const btnRow = contentEl.createEl('div');
-    btnRow.style.cssText = 'display: flex; gap: 12px; justify-content: center;';
+    const btnRow = contentEl.createEl('div', { cls: 'duallink-dedup-btn-row' });
 
-    const sameBtn = btnRow.createEl('button');
+    const sameBtn = btnRow.createEl('button', { cls: 'duallink-dedup-btn--primary' });
     sameBtn.textContent = '是同一个文件，使用现有';
-    sameBtn.style.cssText =
-      'padding: 10px 28px; border-radius: 6px; background: var(--interactive-accent); color: var(--text-on-accent); border: none; cursor: pointer; font-size: 13px; font-weight: 500;';
     sameBtn.addEventListener('click', () => {
       this.resolve('use-existing');
       this.close();
     });
 
-    const renameBtn = btnRow.createEl('button');
+    const renameBtn = btnRow.createEl('button', { cls: 'duallink-dedup-btn--secondary' });
     renameBtn.textContent = '是不同的文件，重命名导入';
-    renameBtn.style.cssText =
-      'padding: 10px 28px; border-radius: 6px; background: var(--background-secondary); color: var(--text-normal); border: 1px solid var(--background-modifier-border); cursor: pointer; font-size: 13px;';
     renameBtn.addEventListener('click', () => {
       this.resolve('rename');
       this.close();
@@ -546,17 +529,13 @@ class FileDedupModal extends Modal {
 
     if (image) {
       try {
-        const img = container.createEl('img');
-        img.style.cssText =
-          'max-width: 100%; max-height: 200px; object-fit: contain; border-radius: 4px;';
+        const img = container.createEl('img', { cls: 'duallink-dedup-preview-img' });
         const convertPath = getConvertPath(this.plugin.app, filePath);
         img.src = convertPath;
       } catch { /* preview failed */ }
     } else {
-      const icon = container.createEl('div', { text: '📄' });
-      icon.style.cssText = 'font-size: 48px; padding: 30px 0;';
-      container.createEl('div', { text: path.basename(filePath) }).style.cssText =
-        'font-size: 11px; word-break: break-all;';
+      const icon = container.createEl('div', { text: '📄', cls: 'duallink-dedup-preview-icon' });
+      container.createEl('div', { text: path.basename(filePath), cls: 'duallink-dedup-preview-name' });
     }
   }
 }

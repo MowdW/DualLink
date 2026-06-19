@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- Node.js 内置模块 (fs/path) 成员访问，ESLint 无法跨模块解析其类型 */
-import { App, MarkdownRenderer, MarkdownPostProcessorContext, MarkdownView, Notice, TFile } from 'obsidian';
+import { MarkdownRenderer, MarkdownPostProcessorContext, MarkdownView, Notice, setIcon, TFile } from 'obsidian';
 import { isImageExt, isVideoExt, isAudioExt } from './constants';
 import { IDualLinkPlugin, VaultAdapter, MarkdownViewWithEditor } from './types';
 import { fs, path } from './node-modules';
@@ -215,8 +215,7 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
           cls: 'duallink-gallery-col-btn duallink-gallery-col-btn--add',
           title: '\u6dfb\u52a0\u65b0\u56fe\u7247' 
         });
-        /* eslint-disable-next-line obsidianmd/no-unsafe-dom-access -- 纯静态 SVG 图标，无 XSS 风险 */
-        addBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
+        setIcon(addBtn, 'plus');
 
         addBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -537,33 +536,30 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     window.setTimeout(() => {
                         const medias = item.querySelectorAll('img, video, audio, .internal-embed');
                         medias.forEach(media => {
-                            /* eslint-disable-next-line obsidianmd/no-unsafe-type-assertion -- popout窗口兼容，需使用instanceof而非HTMLElement.instanceOf */
-                            if (media instanceof HTMLElement) {
-                                let isAudio = media.tagName.toLowerCase() === 'audio' || media.querySelector('audio') !== null;
-                                const srcAttr = media.getAttribute('src');
-                                if (srcAttr && /\.(mp3|wav|ogg|m4a|flac)$/i.test(srcAttr.split('?')[0])) {
-                                    isAudio = true;
-                                }
+                            let isAudio = media.tagName.toLowerCase() === 'audio' || media.querySelector('audio') !== null;
+                            const srcAttr = media.getAttribute('src');
+                            if (srcAttr && /\.(mp3|wav|ogg|m4a|flac)$/i.test(srcAttr.split('?')[0])) {
+                                isAudio = true;
+                            }
 
-                                if (isAudio && media.classList.contains('internal-embed')) {
-                                    media.setAttribute('draggable', 'false');
-                                    return;
-                                }
-
-                                media.addClass('duallink-gallery-media-full-width');
+                            if (isAudio && media.classList.contains('internal-embed')) {
                                 media.setAttribute('draggable', 'false');
+                                return;
+                            }
 
-                                if (!isAudio) {
-                                    if (!media.classList.contains('internal-embed')) {
-                                        media.addClass('duallink-gallery-media-cover');
-                                    }
-                                } else {
-                                    media.addClass('duallink-gallery-media-audio');
-                                }
+                            media.addClass('duallink-gallery-media-full-width');
+                            media.setAttribute('draggable', 'false');
 
-                                if (media.tagName.toLowerCase() === 'img') {
-                                    media.addClass('duallink-gallery-media-img');
+                            if (!isAudio) {
+                                if (!media.classList.contains('internal-embed')) {
+                                    media.addClass('duallink-gallery-media-cover');
                                 }
+                            } else {
+                                media.addClass('duallink-gallery-media-audio');
+                            }
+
+                            if (media.tagName.toLowerCase() === 'img') {
+                                media.addClass('duallink-gallery-media-img');
                             }
                         });
                         const ps = item.querySelectorAll('p');
@@ -583,11 +579,8 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                 resizeObserver.observe(emptyCell);
                 emptyCell.className = 'duallink-gallery-empty';
 
-                const updateIcon = () => {
-                    /* eslint-disable-next-line obsidianmd/no-unsafe-dom-access -- 纯静态 SVG 图标，无 XSS 风险 */
-                    emptyCell.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
-                };
-                updateIcon();
+                setIcon(emptyCell, 'plus');
+                emptyCell.addClass('duallink-gallery-empty--icon');
 
                 emptyCell.addEventListener('click', (e) => {
                     e.stopPropagation();
@@ -600,14 +593,16 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
                     if (!view) {
                         emptyCell.removeClass('duallink-gallery-empty--loading');
-                        updateIcon();
+                        setIcon(emptyCell, 'plus');
+                        emptyCell.addClass('duallink-gallery-empty--icon');
                         return;
                     }
 
                     new PathPromptModal(plugin, '', (inputPath: string) => {
                         emptyCell.removeClass('duallink-gallery-empty--loading');
                         if (!inputPath) {
-                            updateIcon();
+                            setIcon(emptyCell, 'plus');
+                            emptyCell.addClass('duallink-gallery-empty--icon');
                             return;
                         }
                         const adapter = plugin.app.vault.adapter;
@@ -646,4 +641,4 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
   });
 }
 
-/* eslint-enable @typescript-eslint/no-unsafe-member-access */
+/* eslint-enable @typescript-eslint/no-unsafe-member-access -- 恢复 no-unsafe-member-access 检查 */
