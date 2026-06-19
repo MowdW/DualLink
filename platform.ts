@@ -10,4 +10,4 @@ export const isMobile = (): boolean => {
 export const isElectron = (): boolean => {
     return isDesktop() && typeof (window as unknown as { require: unknown }).require !== 'undefined';
 };
-/* eslint-enable */
+/* eslint-enable -- 恢复 no-unsafe-member-access 检查 */

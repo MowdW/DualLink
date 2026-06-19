@@ -2,6 +2,8 @@ import { Modal, App, Notice, setIcon, TFile, MarkdownView, Editor } from 'obsidi
 import { isImageExt, isVideoExt, isAudioExt, isMediaExt } from './constants';
 import { IDualLinkPlugin } from './types';
 
+/* eslint-disable obsidianmd/no-static-styles-assignment -- 移动端模态窗布局复杂，使用CSS变量动态计算尺寸 */
+
 export class MobileFilePickerModal extends Modal {
   private plugin: IDualLinkPlugin;
   private editor: Editor;
@@ -304,3 +306,4 @@ export class MobileFilePickerModal extends Modal {
     this.contentEl.empty();
   }
 }
+/* eslint-enable obsidianmd/no-static-styles-assignment */

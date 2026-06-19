@@ -57,3 +57,4 @@ export function getConvertPath(app: App, filePath: string): string {
 
     return `app://local/${cleanPath}`;
 }
+/* eslint-enable @typescript-eslint/no-unsafe-member-access -- 恢复 no-unsafe-member-access 检查 */

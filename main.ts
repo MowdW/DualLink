@@ -121,7 +121,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
               .setTitle('DualLink')
               .setIcon('link-2')
               .onClick(() => {
-                this.promptForLocalFileLink(editor);
+                void this.promptForLocalFileLink(editor);
               });
           });
           menu.addItem((item) => {
@@ -185,7 +185,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
 
             if (isVideoExt(ext)) {
               if (blobUrl) {
-                const video = document.createElement('video');
+                const video = activeDocument.createElement('video');
                 video.src = blobUrl;
                 video.controls = false;
                 video.addEventListener('mouseenter', () => video.controls = true);
@@ -229,7 +229,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
               }
 
               if (isVideoExt(ext)) {
-                const video = document.createElement('video');
+                const video = activeDocument.createElement('video');
                 video.src = blobUrl;
                 video.controls = false;
                 video.addEventListener('mouseenter', () => video.controls = true);
@@ -237,13 +237,13 @@ export default class LocalFileLinkerPlugin extends Plugin {
                 video.className = 'duallink-rendered-video';
                 a.replaceWith(video);
               } else if (isAudioExt(ext)) {
-                const audio = document.createElement('audio');
+                const audio = activeDocument.createElement('audio');
                 audio.src = blobUrl;
                 audio.controls = true;
                 audio.className = 'duallink-rendered-audio';
                 a.replaceWith(audio);
               } else if (isImageExt(ext)) {
-                const img = document.createElement('img');
+                const img = activeDocument.createElement('img');
                 img.src = blobUrl;
                 img.className = 'duallink-rendered-image';
                 a.replaceWith(img);
@@ -294,7 +294,7 @@ export default class LocalFileLinkerPlugin extends Plugin {
         .onClick(() => {
           const view = this.app.workspace.getActiveViewOfType(MarkdownView);
           if (view) {
-            this.promptForLocalFileLink(view.editor);
+            void this.promptForLocalFileLink(view.editor);
           }
         });
     });
@@ -526,10 +526,12 @@ export default class LocalFileLinkerPlugin extends Plugin {
     new Notice(`📂 正在调取系统原生应用打开文件: ${fileName}`);
     try {
       electron.shell.openPath(filePath).then((err: string) => {
-        if (err) {
-          new Notice(`⚠️ 无法唤醒程序: ${err}`, 5000);
-        }
-      });
+                if (err) {
+                  new Notice(`⚠️ 无法唤醒程序: ${err}`, 5000);
+                }
+              }).catch((e: unknown) => {
+                new Notice(`⚠️ 无法打开文件: ${String(e)}`, 5000);
+              });
     } catch (e) {
       // 兼容非 Electron Web 环境下的说明
       new Notice('提示：当前不在本地 Electron 桌面外壳中。请在桌面版 Obsidian 中使用以一键唤起。');
@@ -713,13 +715,13 @@ export class PathPromptModal extends Modal {
             await this.loadFiles();
         } else {
             // 降级: HTML webkitdirectory input
-            const fileInput = document.createElement('input') as HTMLInputElementWithDirectory;
+            const fileInput = activeDocument.createElement('input') as HTMLInputElementWithDirectory;
             fileInput.type = 'file';
             fileInput.setAttribute('webkitdirectory', '');
             fileInput.setAttribute('directory', '');
             fileInput.webkitdirectory = true;
             fileInput.addClass('file-input-hidden');
-            document.body.appendChild(fileInput);
+            activeDocument.body.appendChild(fileInput);
             
             fileInput.onchange = () => {
                 void (async () => {
@@ -855,6 +857,7 @@ export class PathPromptModal extends Modal {
         { id: 'audio', label: '音频' }
     ];
     
+    /* eslint-disable obsidianmd/no-static-styles-assignment -- Tab高亮通过Obsidian CSS变量动态切换 */
     tabs.forEach(tab => {
         const tabEl = tabsDiv.createEl('button', { text: tab.label });
         tabEl.style.boxShadow = 'none';
@@ -874,6 +877,7 @@ export class PathPromptModal extends Modal {
             this.renderFiles();
         });
     });
+    /* eslint-enable obsidianmd/no-static-styles-assignment */
     
     // 内容显示区 - 移动端优化 (使用同一个 isMobileDevice 变量)
     this.contentContainer = contentEl.createDiv({ cls: 'content-container' });
@@ -1022,7 +1026,7 @@ export class PathPromptModal extends Modal {
               if (file.isDirectory) {
                   this.currentFolderPath = file.path;
                   this.searchQuery = '';
-                  const searchInput = document.querySelector('input[placeholder="搜索该目录下的文件..."]') as HTMLInputElement;
+                  const searchInput = activeDocument.querySelector('input[placeholder="搜索该目录下的文件..."]') as HTMLInputElement;
                   if (searchInput) searchInput.value = '';
                   await this.loadFiles();
               } else {
@@ -1032,6 +1036,7 @@ export class PathPromptModal extends Modal {
                           const toRemove = Array.from(this.selectedFiles).find((f: FileItem) => f.path === file.path);
                           this.selectedFiles.delete(toRemove);
                           isSelected = false;
+                          /* eslint-disable-next-line obsidianmd/no-static-styles-assignment -- 多选状态通过CSS变量动态切换 */
                           item.style.borderColor = 'var(--background-modifier-border)';
                           item.style.backgroundColor = 'var(--background-secondary)';
                           item.style.boxShadow = 'none';
@@ -1066,6 +1071,6 @@ export class PathPromptModal extends Modal {
   }
 }
 
-/* eslint-enable @typescript-eslint/no-unsafe-member-access */
+/* eslint-enable @typescript-eslint/no-unsafe-member-access -- 恢复 no-unsafe-member-access 检查 */
 
 

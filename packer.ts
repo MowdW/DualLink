@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Node.js 内置模块 (fs/path/crypto) 成员访问，ESLint 无法跨模块解析其类型 */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, obsidianmd/no-static-styles-assignment -- Node.js内置模块成员访问 + 模态窗布局使用Obsidian CSS变量动态样式 */
 import { Notice, Modal, App, TFile } from 'obsidian';
 import { isMediaExt, isVideoExt, isAudioExt, isImageExt } from './constants';
 import { getConvertPath } from './path-utils';
@@ -42,7 +42,7 @@ export function hasOtherReferences(app: App, file: TFile, currentPath: string): 
     if (resolvedLinks) {
       for (const [sourcePath, links] of Object.entries(resolvedLinks)) {
         if (sourcePath === currentPath) continue;
-        const linkMap = links as Record<string, number>;
+        const linkMap = links;
         if (linkMap[file.path]) return true;
       }
     }
@@ -525,7 +525,7 @@ class FileDedupModal extends Modal {
       this.close();
     });
 
-    document.addEventListener('keydown', this.escHandler);
+    activeDocument.addEventListener('keydown', this.escHandler);
   }
 
   private escHandler = (e: KeyboardEvent) => {
@@ -536,7 +536,7 @@ class FileDedupModal extends Modal {
   };
 
   onClose() {
-    document.removeEventListener('keydown', this.escHandler);
+    activeDocument.removeEventListener('keydown', this.escHandler);
     this.contentEl.empty();
   }
 
@@ -561,4 +561,4 @@ class FileDedupModal extends Modal {
   }
 }
 
-/* eslint-enable @typescript-eslint/no-unsafe-member-access */
+/* eslint-enable @typescript-eslint/no-unsafe-member-access -- 恢复 no-unsafe-member-access 检查 */

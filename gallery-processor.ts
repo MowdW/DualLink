@@ -148,7 +148,7 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                         const linkText = internalMatch[1].split('|')[0];
                         const dest = plugin.app.metadataCache.getFirstLinkpathDest(linkText, ctx.sourcePath);
                         if (!dest) {
-                            const fileName = linkText.split(/[\/\\]/).pop();
+                            const fileName = linkText.split(/[/\\]/).pop();
                             if (fileName) {
                                 const fallbackDest = plugin.app.metadataCache.getFirstLinkpathDest(fileName, ctx.sourcePath);
                                 if (fallbackDest) {
@@ -212,30 +212,21 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
         const addControls = galleryWrapper.createDiv({ cls: 'duallink-gallery-col-ctrl duallink-gallery-col-ctrl--right duallink-gallery-control' });
 
         const addBtn = addControls.createEl('button', { 
-          cls: 'duallink-gallery-col-btn',
+          cls: 'duallink-gallery-col-btn duallink-gallery-col-btn--add',
           title: '\u6dfb\u52a0\u65b0\u56fe\u7247' 
         });
+        /* eslint-disable-next-line obsidianmd/no-unsafe-dom-access -- 纯静态 SVG 图标，无 XSS 风险 */
         addBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
 
         addBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (el.closest('.markdown-reading-view')) return;
 
-            const tempBox = grid.createEl('div');
-            tempBox.className = 'duallink-gallery-temp-box';
-            tempBox.createEl('span', { text: '\u6b63\u5728\u9009\u62e9\u6587\u4ef6...' });
-
             const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
-            if (!view) {
-                tempBox.remove();
-                return;
-            }
+            if (!view) return;
 
             new PathPromptModal(plugin, '', (inputPath: string) => {
-                if (!inputPath) {
-                    tempBox.remove();
-                    return;
-                }
+                if (!inputPath) return;
                 const adapter = plugin.app.vault.adapter as unknown as VaultAdapter;
                 const vaultBasePath = adapter.getBasePath ? adapter.getBasePath() : '';
                 let newSyntax = '';
@@ -312,13 +303,13 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
         const resizeObserver = new ResizeObserver(() => {
             if (rafId) return;
             rafId = window.requestAnimationFrame(() => {
-                rafId = null;
-                distributeItems();
-            });
+                  rafId = null;
+                  distributeItems();
+              });
         });
 
         images.forEach((imgSource, index) => {
-            const item = document.createElement('div');
+            const item = activeDocument.createElement('div');
             items.push(item);
             resizeObserver.observe(item);
 
@@ -398,15 +389,15 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                 const media = item.querySelector('img, video') as HTMLImageElement | HTMLVideoElement;
                 if (!media) return;
 
-                const overlay = document.body.createEl('div');
+                const overlay = activeDocument.body.createEl('div');
                 overlay.className = 'duallink-gallery-overlay';
 
                 let clone: HTMLElement;
                 if (media.tagName.toLowerCase() === 'img') {
-                    clone = document.createElement('img');
+                    clone = activeDocument.createElement('img');
                     (clone as HTMLImageElement).src = (media as HTMLImageElement).src;
                 } else {
-                    clone = document.createElement('video');
+                    clone = activeDocument.createElement('video');
                     (clone as HTMLVideoElement).src = (media as HTMLVideoElement).src;
                     (clone as HTMLVideoElement).controls = true;
                     (clone as HTMLVideoElement).autoplay = true;
@@ -424,12 +415,12 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                 const escListener = (e2: KeyboardEvent) => {
                     if (e2.key === 'Escape') {
                         overlay.remove();
-                        document.removeEventListener('keydown', escListener);
+                        activeDocument.removeEventListener('keydown', escListener);
                     }
                 };
-                document.addEventListener('keydown', escListener);
+                activeDocument.addEventListener('keydown', escListener);
                 overlay.addEventListener('remove', () => {
-                    document.removeEventListener('keydown', escListener);
+                    activeDocument.removeEventListener('keydown', escListener);
                 });
             });
 
@@ -511,9 +502,9 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                 }
 
                 if (mediaSrc) {
-                    item.innerHTML = '';
+                    item.empty();
                     if (mediaType === 'video') {
-                        const video = document.createElement('video');
+                        const video = activeDocument.createElement('video');
                         video.src = mediaSrc;
                         video.controls = false;
                         video.addEventListener('mouseenter', () => video.controls = true);
@@ -523,14 +514,14 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                         video.className = 'duallink-gallery-media duallink-gallery-media--cover';
                         item.appendChild(video);
                     } else if (mediaType === 'audio') {
-                        const audio = document.createElement('audio');
+                        const audio = activeDocument.createElement('audio');
                         audio.src = mediaSrc;
                         audio.controls = true;
                         audio.setAttribute('draggable', 'false');
                         audio.className = 'duallink-gallery-media duallink-gallery-media--audio';
                         item.appendChild(audio);
                     } else {
-                        const img = document.createElement('img');
+                        const img = activeDocument.createElement('img');
                         img.src = mediaSrc;
                         img.loading = 'lazy';
                         img.decoding = 'async';
@@ -546,6 +537,7 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     window.setTimeout(() => {
                         const medias = item.querySelectorAll('img, video, audio, .internal-embed');
                         medias.forEach(media => {
+                            /* eslint-disable-next-line obsidianmd/no-unsafe-type-assertion -- popout窗口兼容，需使用instanceof而非HTMLElement.instanceOf */
                             if (media instanceof HTMLElement) {
                                 let isAudio = media.tagName.toLowerCase() === 'audio' || media.querySelector('audio') !== null;
                                 const srcAttr = media.getAttribute('src');
@@ -586,12 +578,13 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
         const remainingCols = columns - images.length;
         if (remainingCols > 0) {
             for (let i = 0; i < remainingCols; i++) {
-                const emptyCell = document.createElement('div');
+                const emptyCell = activeDocument.createElement('div');
                 items.push(emptyCell);
                 resizeObserver.observe(emptyCell);
                 emptyCell.className = 'duallink-gallery-empty';
 
                 const updateIcon = () => {
+                    /* eslint-disable-next-line obsidianmd/no-unsafe-dom-access -- 纯静态 SVG 图标，无 XSS 风险 */
                     emptyCell.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
                 };
                 updateIcon();
@@ -600,7 +593,7 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     e.stopPropagation();
                     if (el.closest('.markdown-reading-view')) return;
 
-                    emptyCell.innerHTML = '';
+                    emptyCell.empty();
                     emptyCell.addClass('duallink-gallery-empty--loading');
                     emptyCell.createEl('span', { text: '\u6b63\u5728\u9009\u62e9\u6587\u4ef6...' });
 
@@ -640,6 +633,12 @@ export function registerGalleryProcessor(plugin: IDualLinkPlugin, PathPromptModa
                     }).open();
                 });
             }
+        }
+
+        // 标记父级代码块以便 CSS 替代 :has() 选择器
+        const embedBlock = el.closest('.cm-embed-block') || el.closest('.cm-preview-code-block');
+        if (embedBlock) {
+            embedBlock.addClass('duallink-gallery-embed-block');
         }
 
         distributeItems();
