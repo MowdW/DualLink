@@ -28,17 +28,20 @@ Due to Obsidian's vault mechanism limitations, handling large resource files (su
 
 ## 🚀 Installation
 
-> The plugin is currently in non-official community market stage, requires local manual mounting to enable.
+### From Obsidian Community Plugin Marketplace
 
-1. **Build from Source** (if you cloned this project)
-   Run the build or package command via Node environment, typically generating `main.js` and `manifest.json`.
-2. **Move to Plugin Directory**
-   Open your Obsidian vault location, navigate to `.obsidian/plugins` directory.
-   Create a new empty folder named `obsidian-dual-link`.
-   Copy the compiled `main.js`, `styles.css`, and `manifest.json` into this directory.
-3. **Safe Mode Settings**
-   Start Obsidian, go to **Settings -> Community Plugins**.
-   If in "Safe Mode", turn it off, scroll down to find the **DualLink** plugin card, and toggle it to **On**.
+DualLink is now available on the official Obsidian Community Plugin Marketplace!
+
+1. Open Obsidian **Settings → Community Plugins**
+2. Turn off **Safe Mode** if enabled
+3. Click **Browse** and search for **"DualLink"**
+4. Click **Install**, then **Enable**
+
+### Manual Installation
+
+1. Download the latest release from [GitHub Releases](https://github.com/MowdW/DualLink/releases)
+2. Extract `main.js`, `styles.css`, and `manifest.json` into your vault's `.obsidian/plugins/dual-link/` directory
+3. Enable the plugin in **Settings → Community Plugins**
 
 ---
 
@@ -73,9 +76,69 @@ Open plugin settings to change "Default Link Format":
 
 ---
 
+## 🔌 Public API
+
+DualLink exposes a public API for other plugins to programmatically generate links, pack files, and search external directories.
+
+### Accessing the API
+
+```typescript
+const dualLinkPlugin = this.app.plugins.getPlugin('dual-link');
+if (dualLinkPlugin) {
+  const api = dualLinkPlugin.api;
+  // use api methods...
+}
+```
+
+### API Reference
+
+#### `api.generateMarkdownLink(fileName: string, filePath: string): string`
+
+Generates a formatted Markdown link based on the plugin's current settings (link style, file type detection, etc.).
+
+```typescript
+const link = api.generateMarkdownLink('photo.jpg', 'D:/Photos/photo.jpg');
+// Returns something like: "![photo.jpg](local-file://D%3A/Photos/photo.jpg)"
+```
+
+#### `api.packToVault(): Promise<void>`
+
+Opens the "Pack to Vault" modal, allowing users to copy or move external files into the Obsidian vault.
+
+```typescript
+await api.packToVault();
+```
+
+#### `api.packOut(): Promise<void>`
+
+Opens the "Pack Out" modal, allowing users to export vault files to an external directory.
+
+```typescript
+await api.packOut();
+```
+
+#### `api.findExternalFileRec(fileName: string, dir: string, maxDepth?: number, currentDepth?: number): Promise<string | null>`
+
+Recursively searches for a file by name within an external directory. Returns the full path if found, or `null` if not found.
+
+```typescript
+const found = await api.findExternalFileRec('project-final.mp4', 'D:/Projects');
+if (found) {
+  // found = "D:/Projects/2025/exports/project-final.mp4"
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `fileName` | `string` | (required) | The file name to search for |
+| `dir` | `string` | (required) | Starting directory for recursive search |
+| `maxDepth` | `number` | `4` | Maximum directory depth to traverse |
+| `currentDepth` | `number` | `0` | Internal recursion tracker (usually omitted) |
+
+---
+
 ## 🛠 Development & Build Commands
 
-If you want to modify based on this project:
 ```bash
 # Install dependencies
 npm install
@@ -92,22 +155,27 @@ npm run build
 ## 中文说明
 
 **DualLink** 是一款专为 Obsidian 打造的高效本地及外部物理文件关联、管理与实时预览插件。
-由于 Obsidian 本身的保险箱机制限制，我们在涉及大容量资源文件（如几十GB的视频、大量无损音频、工程源文件）或系统级别不同网盘映射时，往往无法或者不适合将它们悉数移入 `.obsidian` 保险箱中。本插件完美解决了"既需要外部路径大文件关联，又需要内置丝滑预览"的痛点，帮助您在同一面板内无缝整合**外部绝对路径文件**与**内部保险箱文件**。
+
+已上架 Obsidian 社区插件市场，可直接在 **设置 → 第三方插件 → 浏览** 中搜索 **"DualLink"** 安装。
 
 ### 核心特性
+- **📂 双轨模式驱动** - 左侧边栏内置交互式文件浏览器，支持内部库与外部路径一键切换
+- **🖱️ 极速拖入映射** - 外部文件拖拽进入编辑器自动转为 `local-file://` 关联
+- **👁️ 实时悬浮与内嵌预览** - 鼠标悬浮卡片式预览，支持图片内嵌渲染
+- **🎵 多媒体即时解码** - `.mp4` / `.webm` / `.mp3` 等格式内联渲染
+- **⚙️ 多形式协议适配** - 3 种链接格式：custom-protocol、file:///、绝对路径
+- **✨ 智能区分链接** - 自动判断内外资源生成对应格式
 
-- **📂 双轨模式驱动** - 左侧边栏内置交互式文件浏览器，支持一键在内部库模式和外部路径模式之间切换
-- **🖱️ 极速拖入映射** - 直接将外部文件拖拽进入编辑器，自动转为 `local-file://` 关联软链
-- **👁️ 实时悬浮与内嵌预览** - 鼠标悬浮即可调出卡片式预览，支持图片内嵌渲染
-- **🎵 多媒体即时解码** - 支持 `.mp4`, `.webm`, `.mp3` 等格式内联渲染
-- **⚙️ 多形式协议适配** - 提供 3 种链接格式：custom-protocol、file:///、绝对路径
-- **✨ 智能区分链接** - 自动判断内外资源，生成对应格式链接
+### 公共 API
 
-### 安装步骤
+其他插件可通过 `this.app.plugins.getPlugin('dual-link')` 获取 DualLink 实例，调用 `.api` 上的方法：
 
-1. 编译构建生成 `main.js`、`styles.css` 和 `manifest.json`
-2. 将文件复制到 `.obsidian/plugins/obsidian-dual-link` 目录
-3. 在 Obsidian 设置中启用第三方插件，打开 DualLink
+| 方法 | 说明 |
+|------|------|
+| `generateMarkdownLink(name, path)` | 根据当前设置生成格式化链接 |
+| `packToVault()` | 打开"导入到保险库"对话框 |
+| `packOut()` | 打开"导出到外部"对话框 |
+| `findExternalFileRec(name, dir, depth?)` | 递归查找外部文件并返回完整路径 |
 
 ---
 
